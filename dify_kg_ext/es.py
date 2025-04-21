@@ -2,10 +2,15 @@ import os
 from typing import List
 
 import elasticsearch
+from dify_kg_ext import APP_NAME
 from dify_kg_ext.adapters import embedding
 from dify_kg_ext.dataclasses import Knowledge
 
 DIM_SIZE = 1024
+
+# Define index names with prefix
+VECTOR_INDEX = f"{APP_NAME}_vector_index"
+KNOWLEDGE_INDEX = f"{APP_NAME}_knowledge_index"
 
 # Vector mapping with type field to distinguish question/answer vectors
 vector_mapping = {
@@ -57,6 +62,7 @@ knowledge_mapping = {
             "document_id": {"type": "keyword"},
             "keywords": {"type": "keyword"},
             "category_id": {"type": "keyword"},
+            "library_ids": {"type": "keyword"},  # Added field for multiple libraries
         },
     }
 }
@@ -72,7 +78,7 @@ async def index_document(doc: "Knowledge"):
     # First delete all vectors associated with this segment_id
     delete_query = {"query": {"term": {"segment_id": doc.segment_id}}}
     await es_client.delete_by_query(
-        index="vector_index", body=delete_query, ignore=[404]
+        index=VECTOR_INDEX, body=delete_query, ignore=[404]
     )
 
     # Generate embeddings
@@ -106,12 +112,13 @@ async def index_document(doc: "Knowledge"):
         "document_id": doc.document_id,
         "keywords": doc.keywords,
         "category_id": doc.category_id,
+        "library_ids": doc.library_ids if hasattr(doc, "library_ids") else [],
     }
 
     # Index operation for knowledge document
     bulk_operations.append({
         "index": {
-            "_index": "knowledge_index",
+            "_index": KNOWLEDGE_INDEX,
             "_id": doc.segment_id
         }
     })
@@ -125,7 +132,7 @@ async def index_document(doc: "Knowledge"):
             "vector": question_vector,
             "text": doc.question,
         }
-        bulk_operations.append({"index": {"_index": "vector_index"}})
+        bulk_operations.append({"index": {"_index": VECTOR_INDEX}})
         bulk_operations.append(question_vector_doc)
 
         # Handle similar questions - add operations for each
@@ -137,7 +144,7 @@ async def index_document(doc: "Knowledge"):
                     "vector": question_vector,  # Using same vector as main question
                     "text": similar_q,
                 }
-                bulk_operations.append({"index": {"_index": "vector_index"}})
+                bulk_operations.append({"index": {"_index": VECTOR_INDEX}})
                 bulk_operations.append(similar_q_doc)
 
     # Add answer vector document operation
@@ -149,7 +156,7 @@ async def index_document(doc: "Knowledge"):
             "vector": answer_vector,
             "text": answer_content,
         }
-        bulk_operations.append({"index": {"_index": "vector_index"}})
+        bulk_operations.append({"index": {"_index": VECTOR_INDEX}})
         bulk_operations.append(answer_vector_doc)
 
     # Execute all operations in a single bulk request
@@ -181,7 +188,7 @@ async def delete_documents(segment_ids: List[str]):
     }
     
     vector_results = await es_client.search(
-        index="vector_index",
+        index=VECTOR_INDEX,
         body=search_query
     )
     
@@ -192,7 +199,7 @@ async def delete_documents(segment_ids: List[str]):
     for segment_id in segment_ids:
         bulk_operations.append({
             "delete": {
-                "_index": "knowledge_index",
+                "_index": KNOWLEDGE_INDEX,
                 "_id": segment_id
             }
         })
@@ -201,7 +208,7 @@ async def delete_documents(segment_ids: List[str]):
     for hit in vector_results["hits"]["hits"]:
         bulk_operations.append({
             "delete": {
-                "_index": "vector_index",
+                "_index": VECTOR_INDEX,
                 "_id": hit["_id"]
             }
         })
@@ -209,3 +216,154 @@ async def delete_documents(segment_ids: List[str]):
     # Execute bulk delete for all documents in a single operation
     if bulk_operations:
         await es_client.bulk(operations=bulk_operations, refresh=True)
+
+# Add bind and unbind functions
+async def bind_knowledge_to_library(library_id: str, category_ids: List[str]):
+    """
+    Bind multiple knowledge documents to a library
+    
+    Args:
+        library_id: The library ID to bind to
+        category_ids: List of category IDs to bind
+        
+    Returns:
+        Dict with success_count and failed_ids
+    """
+    if not category_ids or not library_id:
+        return {"success_count": 0, "failed_ids": category_ids or []}
+    
+    success_count = 0
+    failed_ids = []
+    bulk_operations = []
+    
+    # First collect all documents that exist
+    for category_id in category_ids:
+        exists = await es_client.exists(index=KNOWLEDGE_INDEX, id=category_id)
+        if not exists:
+            failed_ids.append(category_id)
+            continue
+            
+        doc = await es_client.get(index=KNOWLEDGE_INDEX, id=category_id, ignore=[404])
+        if "_source" not in doc:
+            failed_ids.append(category_id)
+            continue
+            
+        source = doc["_source"]
+        library_ids = source.get("library_ids", [])
+        
+        # Only update if library_id is not already in the list
+        if library_id not in library_ids:
+            library_ids.append(library_id)
+            bulk_operations.append({
+                "update": {
+                    "_index": KNOWLEDGE_INDEX,
+                    "_id": category_id
+                }
+            })
+            bulk_operations.append({
+                "doc": {
+                    "library_ids": library_ids
+                }
+            })
+            success_count += 1
+    
+    # Execute bulk update if we have operations
+    if bulk_operations:
+        await es_client.bulk(operations=bulk_operations, refresh=True)
+    
+    return {"success_count": success_count, "failed_ids": failed_ids}
+
+async def unbind_knowledge_from_library(library_id: str, category_ids: List[str], delete_type: str = "part"):
+    """
+    Unbind knowledge documents from a library
+    
+    Args:
+        library_id: The library ID to unbind from
+        category_ids: List of category IDs to unbind (used when delete_type is "part")
+        delete_type: "all" to unbind all documents from library, "part" to unbind only specified category_ids
+        
+    Returns:
+        Dict with success_count and failed_ids
+    """
+    if not library_id:
+        return {"success_count": 0, "failed_ids": category_ids or []}
+    
+    success_count = 0
+    failed_ids = []
+    bulk_operations = []
+    
+    if delete_type == "all":
+        # Find all documents with this library_id
+        search_query = {
+            "query": {
+                "term": {
+                    "library_ids": library_id
+                }
+            },
+            "size": 10000
+        }
+        
+        results = await es_client.search(
+            index=KNOWLEDGE_INDEX,
+            body=search_query,
+            _source=["segment_id", "library_ids"]
+        )
+        
+        # Update each document to remove the library_id
+        for hit in results["hits"]["hits"]:
+            doc_id = hit["_id"]
+            library_ids = hit["_source"].get("library_ids", [])
+            if library_id in library_ids:
+                library_ids.remove(library_id)
+                bulk_operations.append({
+                    "update": {
+                        "_index": KNOWLEDGE_INDEX,
+                        "_id": doc_id
+                    }
+                })
+                bulk_operations.append({
+                    "doc": {
+                        "library_ids": library_ids
+                    }
+                })
+        
+        if bulk_operations:
+            await es_client.bulk(operations=bulk_operations, refresh=True)
+            success_count = len(bulk_operations) // 2  # Each update is 2 operations
+    else:
+        # Process only specified category_ids
+        for category_id in category_ids:
+            exists = await es_client.exists(index=KNOWLEDGE_INDEX, id=category_id)
+            if not exists:
+                failed_ids.append(category_id)
+                continue
+                
+            doc = await es_client.get(index=KNOWLEDGE_INDEX, id=category_id, ignore=[404])
+            if "_source" not in doc:
+                failed_ids.append(category_id)
+                continue
+                
+            source = doc["_source"]
+            library_ids = source.get("library_ids", [])
+            
+            # Only update if library_id is in the list
+            if library_id in library_ids:
+                library_ids.remove(library_id)
+                bulk_operations.append({
+                    "update": {
+                        "_index": KNOWLEDGE_INDEX,
+                        "_id": category_id
+                    }
+                })
+                bulk_operations.append({
+                    "doc": {
+                        "library_ids": library_ids
+                    }
+                })
+                success_count += 1
+    
+    # Execute bulk update if we have operations
+    if bulk_operations:
+        await es_client.bulk(operations=bulk_operations, refresh=True)
+    
+    return {"success_count": success_count, "failed_ids": failed_ids}
