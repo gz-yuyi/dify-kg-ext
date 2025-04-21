@@ -226,33 +226,16 @@ async def bind_knowledge_to_library(library_id: str, category_ids: List[str]):
     """
     if not category_ids or not library_id:
         return {"success_count": 0, "failed_ids": category_ids or []}
-
-    success_count = 0
-    failed_ids = []
-    bulk_operations = []
-
-    # First verify that all category_ids exist
-    for category_id in category_ids:
-        exists = await es_client.exists(index=KNOWLEDGE_INDEX, id=category_id)
-        if not exists:
-            failed_ids.append(category_id)
-            continue
-
-        # Create binding document
-        binding_id = f"{library_id}_{category_id}"
-        bulk_operations.append({"index": {"_index": BINDING_INDEX, "_id": binding_id}})
-        bulk_operations.append({"library_id": library_id, "category_id": category_id})
-        success_count += 1
-
-    # Execute bulk update if we have operations
-    if bulk_operations:
-        await es_client.bulk(operations=bulk_operations, refresh=True)
-
-    return {"success_count": success_count, "failed_ids": failed_ids}
+    # create binding document
+    binding_doc = {
+        "library_id": library_id,
+        "category_id": category_ids,
+    }
+    await es_client.index(index=BINDING_INDEX, body=binding_doc, refresh=True)
 
 
 async def unbind_knowledge_from_library(
-    library_id: str, category_ids: List[str] = None, delete_type: str = "part"
+    library_id: str, category_ids: List[str] = None, delete_type: str = "all"
 ):
     """
     Unbind knowledge documents from a library
@@ -260,46 +243,83 @@ async def unbind_knowledge_from_library(
     Args:
         library_id: The library ID to unbind from
         category_ids: List of category IDs to unbind (used when delete_type is "part")
-        delete_type: "all" to unbind all documents from library, "part" to unbind only specified category_ids
+        delete_type: "all" to unbind all documents from library
 
     Returns:
         Dict with success_count and number of unbound documents
     """
-    if not library_id:
-        return {"success_count": 0, "unbound_count": 0}
+    # 现在都是delete_type为all的逻辑，这里保留参数只是为了做兼容处理
+    response = await es_client.delete_by_query(
+        index=BINDING_INDEX,
+        body={"query": {"term": {"library_id": library_id}}},
+        refresh=True,
+    )
+    return {"success_count": response["deleted"], "failed_ids": []}
 
-    success_count = 0
 
-    if delete_type == "all":
-        # Delete all bindings for this library_id
-        delete_query = {"query": {"term": {"library_id": library_id}}}
+async def search_knowledge(query: str, library_id: str, limit: int = 10):
+    """
+    Search for knowledge segments by query text within a specific library
 
-        result = await es_client.delete_by_query(
-            index=BINDING_INDEX, body=delete_query, refresh=True
+    Args:
+        query: The search query text
+        library_id: The library ID to search within
+        limit: Maximum number of results to return
+
+    Returns:
+        List of Knowledge objects matching the query
+    """
+    # Generate embedding for the query
+    query_vector = await embedding(query)
+
+    # First, get all category_ids bound to this library
+    binding_result = await es_client.get(index=BINDING_INDEX, id=library_id)
+
+    category_ids = binding_result["_source"]["category_id"]
+
+    if not category_ids:
+        return {"segments": []}
+
+    # Search for matching knowledge using hybrid approach (vector KNN + keyword)
+    vector_results = await es_client.search(
+        index=VECTOR_INDEX,
+        size=limit,
+        knn={"vector": {"vector": query_vector, "k": limit}},
+        filter={"terms": {"category_id": category_ids}},
+    )
+
+    # Extract unique segment_ids from results
+    segment_ids = list(
+        set(hit["_source"]["segment_id"] for hit in vector_results["hits"]["hits"])
+    )
+
+    if not segment_ids:
+        return {"segments": []}
+
+    # Fetch the complete knowledge documents for these segment_ids
+    knowledge_results = await es_client.search(
+        index=KNOWLEDGE_INDEX, query={"terms": {"_id": segment_ids}}, size=limit
+    )
+
+    # Transform results into Knowledge objects
+    knowledge_list = []
+    for hit in knowledge_results["hits"]["hits"]:
+        source = hit["_source"]
+        knowledge = Knowledge(
+            segment_id=source["segment_id"],
+            source=source["source"],
+            knowledge_type=source["knowledge_type"],
+            question=source.get("question"),
+            similar_questions=source.get("similar_questions", []),
+            answers=[
+                {"content": answer["content"], "channels": answer["channels"]}
+                for answer in source.get("answers", [])
+            ],
+            weight=source.get("weight", 0),
+            document_id=source.get("document_id"),
+            keywords=source.get("keywords", []),
+            category_id=source.get("category_id"),
         )
+        knowledge_list.append(knowledge)
 
-        success_count = result.get("deleted", 0)
-    else:
-        # Process only specified category_ids
-        if not category_ids:
-            return {"success_count": 0, "unbound_count": 0}
-
-        bulk_operations = []
-
-        for category_id in category_ids:
-            binding_id = f"{library_id}_{category_id}"
-            bulk_operations.append(
-                {"delete": {"_index": BINDING_INDEX, "_id": binding_id}}
-            )
-
-        if bulk_operations:
-            result = await es_client.bulk(operations=bulk_operations, refresh=True)
-            success_count = len(
-                [
-                    item
-                    for item in result.get("items", [])
-                    if item.get("delete", {}).get("status") == 200
-                ]
-            )
-
-    return {"success_count": 1, "unbound_count": success_count}
+    return {"segments": knowledge_list}

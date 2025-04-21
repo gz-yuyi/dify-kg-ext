@@ -216,3 +216,94 @@ class UnbindBatchResponse(BaseResponse):
                 "data": {"success_count": 2, "failed_ids": []},
             }
         }
+
+
+class KnowledgeSearchRequest(BaseModel):
+    query: str = Field(..., min_length=1, description="搜索关键词")
+    library_id: str = Field(..., min_length=1, description="要搜索的知识库ID")
+    limit: int = Field(10, gt=0, le=100, description="返回结果数量限制")
+
+    @field_validator("query")
+    @classmethod
+    def validate_query_not_empty(cls, v):
+        if not v.strip():
+            raise ValueError("搜索关键词不能为空")
+        return v
+
+    @field_validator("library_id")
+    @classmethod
+    def validate_library_id(cls, v):
+        if not v.strip():
+            raise ValueError("知识库ID不能为空")
+        return v
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "query": "社保问题",
+                "library_id": "lib_123456",
+                "limit": 10
+            }
+        }
+
+
+class KnowledgeSearchResponseData(BaseModel):
+    segments: List[Knowledge] = Field(..., description="搜索到的知识列表")
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "segments": [
+                    {
+                        "segment_id": "id_xxx",
+                        "source": "personal",
+                        "knowledge_type": "faq",
+                        "question": "社保征缴相关问题指引口径？",
+                        "similar_questions": ["如何了解社保征缴相关问题？", "社保缴费问题如何咨询？"],
+                        "answers": [
+                            {
+                                "content": "您好，在办理社保缴费登记、申报社保缴费业务时如有疑问，可拨打0769-12366纳税缴费服务热线咨询。",
+                                "channels": ["channel_a", "channel_b"],
+                            }
+                        ],
+                        "weight": 5,
+                        "document_id": "doc_789",
+                        "keywords": ["社保", "征缴", "咨询"],
+                        "category_id": "cat_001",
+                    }
+                ]
+            }
+        }
+
+
+class KnowledgeSearchResponse(BaseResponse):
+    data: KnowledgeSearchResponseData
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "code": 200,
+                "msg": "success",
+                "data": {
+                    "segments": [
+                        {
+                            "segment_id": "id_xxx",
+                            "source": "personal",
+                            "knowledge_type": "faq",
+                            "question": "社保征缴相关问题指引口径？",
+                            "similar_questions": ["如何了解社保征缴相关问题？", "社保缴费问题如何咨询？"],
+                            "answers": [
+                                {
+                                    "content": "您好，在办理社保缴费登记、申报社保缴费业务时如有疑问，可拨打0769-12366纳税缴费服务热线咨询。",
+                                    "channels": ["channel_a", "channel_b"],
+                                }
+                            ],
+                            "weight": 5,
+                            "document_id": "doc_789",
+                            "keywords": ["社保", "征缴", "咨询"],
+                            "category_id": "cat_001",
+                        }
+                    ]
+                },
+            }
+        }
