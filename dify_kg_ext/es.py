@@ -37,7 +37,6 @@ vector_mapping = {
 # Main knowledge data mapping with segment_id as primary key
 knowledge_mapping = {
     "mappings": {
-        "_id": {"path": "segment_id"},  # Using segment_id as document ID
         "properties": {
             "segment_id": {"type": "keyword"},
             "source": {"type": "keyword"},
@@ -85,11 +84,38 @@ es_client = elasticsearch.AsyncElasticsearch(
 )
 
 
+def ensure_index_exists_decorator(func):
+    """Decorator that ensures all required Elasticsearch indices exist before executing the decorated function"""
+
+    async def wrapper(*args, **kwargs):
+        # Check and create vector index
+        if not await es_client.indices.exists(index=VECTOR_INDEX, ignore=[400, 404]):
+            await es_client.indices.create(index=VECTOR_INDEX, body=vector_mapping)
+
+        # Check and create knowledge index
+        if not await es_client.indices.exists(index=KNOWLEDGE_INDEX, ignore=[400, 404]):
+            await es_client.indices.create(
+                index=KNOWLEDGE_INDEX, body=knowledge_mapping
+            )
+
+        # Check and create binding index
+        if not await es_client.indices.exists(index=BINDING_INDEX, ignore=[400, 404]):
+            await es_client.indices.create(index=BINDING_INDEX, body=binding_mapping)
+
+        # Call the decorated function
+        return await func(*args, **kwargs)
+
+    return wrapper
+
+
+@ensure_index_exists_decorator
 async def index_document(doc: "Knowledge"):
     """Index a knowledge document using bulk operations for better atomicity"""
     # First delete all vectors associated with this segment_id
-    delete_query = {"query": {"term": {"segment_id": doc.segment_id}}}
-    await es_client.delete_by_query(index=VECTOR_INDEX, body=delete_query, ignore=[404])
+    delete_query = {"term": {"segment_id": doc.segment_id}}
+    await es_client.delete_by_query(
+        index=VECTOR_INDEX, query=delete_query, ignore=[404, 400]
+    )
 
     # Generate embeddings
     question_vector = None
@@ -175,6 +201,7 @@ async def index_document(doc: "Knowledge"):
     return doc.segment_id
 
 
+@ensure_index_exists_decorator
 async def delete_documents(segment_ids: List[str]):
     """
     Delete multiple knowledge documents and their associated vectors by segment_ids
@@ -187,13 +214,14 @@ async def delete_documents(segment_ids: List[str]):
         return
 
     # First find all vector documents for these segment_ids
-    search_query = {
-        "query": {"terms": {"segment_id": segment_ids}},
-        "size": 10000,  # Adjust as needed based on your data volume
-        "_source": False,  # We only need the IDs
-    }
+    search_query = {"terms": {"segment_id": segment_ids}}
 
-    vector_results = await es_client.search(index=VECTOR_INDEX, body=search_query)
+    vector_results = await es_client.search(
+        index=VECTOR_INDEX,
+        query=search_query,
+        size=10000,  # Adjust as needed based on your data volume
+        _source=False,  # We only need the IDs
+    )
 
     # Prepare bulk delete operations for both knowledge and vector documents
     bulk_operations = []
@@ -213,6 +241,7 @@ async def delete_documents(segment_ids: List[str]):
         await es_client.bulk(operations=bulk_operations, refresh=True)
 
 
+@ensure_index_exists_decorator
 async def bind_knowledge_to_library(library_id: str, category_ids: List[str]):
     """
     Bind multiple knowledge documents to a library
@@ -231,9 +260,10 @@ async def bind_knowledge_to_library(library_id: str, category_ids: List[str]):
         "library_id": library_id,
         "category_id": category_ids,
     }
-    await es_client.index(index=BINDING_INDEX, body=binding_doc, refresh=True)
+    await es_client.index(index=BINDING_INDEX, document=binding_doc, refresh=True)
 
 
+@ensure_index_exists_decorator
 async def unbind_knowledge_from_library(
     library_id: str, category_ids: List[str] = None, delete_type: str = "all"
 ):
@@ -251,7 +281,7 @@ async def unbind_knowledge_from_library(
     # 现在都是delete_type为all的逻辑，这里保留参数只是为了做兼容处理
     response = await es_client.delete_by_query(
         index=BINDING_INDEX,
-        body={"query": {"term": {"library_id": library_id}}},
+        query={"term": {"library_id": library_id}},
         refresh=True,
     )
     return {"success_count": response["deleted"], "failed_ids": []}
