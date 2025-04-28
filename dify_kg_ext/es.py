@@ -261,6 +261,7 @@ async def bind_knowledge_to_library(library_id: str, category_ids: List[str]):
         "category_id": category_ids,
     }
     await es_client.index(index=BINDING_INDEX, document=binding_doc, refresh=True)
+    return {"success_count": 1, "failed_ids": []}
 
 
 @ensure_index_exists_decorator

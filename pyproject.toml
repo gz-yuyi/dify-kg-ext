@@ -32,6 +32,7 @@ dev = [
     "pytest-asyncio>=0.24.0",
     "pytest>=8.3.3",
     "tqdm>=4.67.1",
+    "aresponses>=3.0.0",
 ]
 
 [tool.pytest.ini_options]

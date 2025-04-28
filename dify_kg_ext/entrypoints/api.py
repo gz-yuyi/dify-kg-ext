@@ -1,5 +1,4 @@
 from fastapi import FastAPI, HTTPException
-from typing import List
 
 from dify_kg_ext.dataclasses import (
     Knowledge, 
@@ -57,10 +56,7 @@ async def bind_knowledge_batch(request: KnowledgeBindBatchRequest):
     return {
         "code": 200,
         "msg": "success",
-        "data": {
-            "success_count": result["success_count"],
-            "failed_ids": result["failed_ids"]
-        }
+        "data": result
     }
 
 @app.post("/knowledge/unbind_batch", response_model=UnbindBatchResponse)
@@ -77,8 +73,5 @@ async def unbind_knowledge_batch(request: KnowledgeUnbindBatchRequest):
     return {
         "code": 200,
         "msg": "success",
-        "data": {
-            "success_count": result["success_count"],
-            "failed_ids": result["failed_ids"]
-        }
+        "data": result
     } 
