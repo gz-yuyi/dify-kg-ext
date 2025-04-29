@@ -371,3 +371,124 @@ async def search_knowledge(query: str, library_id: str, limit: int = 10):
         knowledge_list.append(knowledge)
 
     return {"segments": knowledge_list}
+
+
+async def check_knowledge_exists(knowledge_id: str) -> bool:
+    """
+    检查指定知识库ID是否存在
+    
+    Args:
+        knowledge_id: 知识库ID
+        
+    Returns:
+        bool: 知识库是否存在
+    """
+    # 改变实现方式，不要await布尔值
+    exists_result = await es_client.exists(
+        index=BINDING_INDEX, id=knowledge_id
+    )
+    return exists_result
+
+
+async def retrieve_knowledge(knowledge_id: str, query: str, top_k: int = 5, score_threshold: float = 0.5, metadata_condition=None):
+    """
+    从知识库检索数据
+    
+    Args:
+        knowledge_id: 知识库ID（对应library_id）
+        query: 用户查询
+        top_k: 返回结果的最大数量  
+        score_threshold: 相关性分数阈值
+        metadata_condition: 元数据过滤条件
+        
+    Returns:
+        包含检索结果的记录列表
+    """
+    # 先检查知识库是否存在
+    if not await check_knowledge_exists(knowledge_id):
+        return {"records": []}
+    
+    # 生成查询的向量表示
+    query_vector = await embedding(query)
+    
+    # 获取知识库绑定的所有category_ids
+    binding_result = await es_client.get(
+        index=BINDING_INDEX, id=knowledge_id, ignore=[400, 404]
+    )
+    
+    if not binding_result.get("found", False):
+        return {"records": []}
+    
+    category_ids = binding_result["_source"]["category_id"]
+    
+    if not category_ids:
+        return {"records": []}
+    
+    # 使用script_score查询以获得更好的兼容性
+    vector_query = {
+        "script_score": {
+            "query": {"terms": {"category_id": category_ids}},
+            "script": {
+                "source": "cosineSimilarity(params.query_vector, 'vector') + 1.0",
+                "params": {"query_vector": query_vector}
+            }
+        }
+    }
+    
+    # 应用元数据过滤条件
+    if metadata_condition:
+        # TODO 这里需要实现元数据过滤逻辑，暂未实现
+        pass
+    
+    # 搜索匹配的知识
+    vector_results = await es_client.search(
+        index=VECTOR_INDEX,
+        query=vector_query,
+        size=top_k
+    )
+    
+    # 提取结果信息
+    records = []
+    
+    for hit in vector_results["hits"]["hits"]:
+        source = hit["_source"]
+        score = hit["_score"] - 1.0  # 还原余弦相似度范围到0-1
+        
+        if score < score_threshold:
+            continue
+            
+        segment_id = source["segment_id"]
+        
+        # 获取完整知识文档，并处理可能的错误
+        knowledge_doc = await es_client.get(
+            index=KNOWLEDGE_INDEX, id=segment_id, ignore=[404]
+        )
+        
+        # 如果文档不存在，跳过此结果
+        if not knowledge_doc.get("found", False):
+            continue
+            
+        knowledge_source = knowledge_doc["_source"]
+        
+        # 创建记录
+        content = source["text"]
+        title = knowledge_source.get("question", "未知标题")
+        
+        # 构建元数据
+        metadata = {
+            "document_id": knowledge_source.get("document_id"),
+            "category_id": knowledge_source.get("category_id"),
+            "knowledge_type": knowledge_source.get("knowledge_type"),
+        }
+        
+        if knowledge_source.get("keywords"):
+            metadata["keywords"] = knowledge_source.get("keywords")
+            
+        records.append({
+            "content": content,
+            "score": round(float(score), 2),  # 四舍五入到两位小数
+            "title": title,
+            "metadata": metadata
+        })
+    
+    return {"records": records}

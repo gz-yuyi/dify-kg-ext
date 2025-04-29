@@ -1,5 +1,6 @@
 import pytest
 from unittest.mock import patch, AsyncMock
+from pytest import approx
 
 from dify_kg_ext.es import (
     index_document,
@@ -9,7 +10,9 @@ from dify_kg_ext.es import (
     search_knowledge,
     VECTOR_INDEX,
     KNOWLEDGE_INDEX,
-    BINDING_INDEX
+    BINDING_INDEX,
+    check_knowledge_exists,
+    retrieve_knowledge
 )
 from dify_kg_ext.dataclasses import Knowledge, Answer
 
@@ -24,6 +27,7 @@ def mock_es_client():
         mock_client.search = AsyncMock()
         mock_client.get = AsyncMock()
         mock_client.index = AsyncMock(return_value={"_id": "test_id"})
+        mock_client.exists = AsyncMock()
         
         yield mock_client
 
@@ -199,4 +203,172 @@ async def test_search_knowledge(mock_es_client, mock_embedding):
     assert "segments" in result
     assert len(result["segments"]) == 1
     assert isinstance(result["segments"][0], Knowledge)
-    assert result["segments"][0].segment_id == "segment_123" 
+    assert result["segments"][0].segment_id == "segment_123"
+
+@pytest.mark.asyncio
+async def test_check_knowledge_exists(mock_es_client):
+    # 设置mock响应为AsyncMock而不是普通bool
+    mock_es_client.exists.return_value = True
+    
+    # 调用函数
+    result = await check_knowledge_exists("lib_123")
+    
+    # 验证exists调用
+    mock_es_client.exists.assert_called_once_with(
+        index=BINDING_INDEX, id="lib_123"
+    )
+    
+    # 验证返回值
+    assert result is True
+    
+    # 重置mock并测试不存在的情况
+    mock_es_client.exists.reset_mock()
+    mock_es_client.exists.return_value = False
+    
+    result = await check_knowledge_exists("non_existent_lib")
+    assert result is False
+
+@pytest.mark.asyncio
+async def test_retrieve_knowledge(mock_es_client, mock_embedding):
+    # 设置知识库存在的mock响应
+    mock_es_client.exists.return_value = True
+    
+    # 设置binding文档的mock响应
+    mock_es_client.get.side_effect = [
+        # 第一次调用get (binding查询)
+        {
+            "found": True,
+            "_source": {
+                "category_id": ["cat_1", "cat_2"]
+            }
+        },
+        # 第二次调用get (第一个知识文档)
+        {
+            "found": True,
+            "_source": {
+                "segment_id": "segment_123",
+                "question": "Sample question",
+                "document_id": "doc_456",
+                "category_id": "cat_1",
+                "knowledge_type": "faq",
+                "keywords": ["keyword1", "keyword2"]
+            }
+        },
+        # 第三次调用get (第二个知识文档)
+        {
+            "found": True,
+            "_source": {
+                "segment_id": "segment_456",
+                "question": "Another question",
+                "document_id": "doc_789",
+                "category_id": "cat_2",
+                "knowledge_type": "segment"
+            }
+        }
+    ]
+    
+    # 设置向量搜索结果的mock响应
+    mock_es_client.search.return_value = {
+        "hits": {
+            "hits": [
+                {
+                    "_score": 1.85,  # 0.85 after normalization
+                    "_source": {
+                        "segment_id": "segment_123",
+                        "text": "This is a sample text content",
+                        "category_id": "cat_1"
+                    }
+                },
+                {
+                    "_score": 1.75,  # 0.75 after normalization
+                    "_source": {
+                        "segment_id": "segment_456",
+                        "text": "This is another text content",
+                        "category_id": "cat_2"
+                    }
+                },
+                {
+                    "_score": 1.45,  # 0.45 after normalization - below threshold
+                    "_source": {
+                        "segment_id": "segment_789",
+                        "text": "Low score content",
+                        "category_id": "cat_1"
+                    }
+                }
+            ]
+        }
+    }
+    
+    # 调用函数
+    result = await retrieve_knowledge(
+        knowledge_id="lib_123",
+        query="test query",
+        top_k=3,
+        score_threshold=0.5
+    )
+    
+    # 验证调用
+    mock_embedding.assert_called_once_with("test query")
+    mock_es_client.exists.assert_called_once()
+    assert mock_es_client.get.call_count == 3
+    mock_es_client.search.assert_called_once()
+    
+    # 验证结果
+    assert "records" in result
+    assert len(result["records"]) == 2  # 第三个结果低于阈值
+    
+    # 验证第一条记录
+    assert result["records"][0]["content"] == "This is a sample text content"
+    assert result["records"][0]["score"] == approx(0.85)
+    assert result["records"][0]["title"] == "Sample question"
+    assert "metadata" in result["records"][0]
+    assert result["records"][0]["metadata"]["document_id"] == "doc_456"
+    assert "keywords" in result["records"][0]["metadata"]
+    
+    # 验证第二条记录
+    assert result["records"][1]["content"] == "This is another text content"
+    assert result["records"][1]["score"] == approx(0.75)
+    assert result["records"][1]["title"] == "Another question"
+
+@pytest.mark.asyncio
+async def test_retrieve_knowledge_empty_results(mock_es_client, mock_embedding):
+    # 设置知识库存在但无结果的情况
+    mock_es_client.exists.return_value = True
+    mock_es_client.get.return_value = {
+        "found": True,
+        "_source": {
+            "category_id": ["cat_1"]
+        }
+    }
+    mock_es_client.search.return_value = {
+        "hits": {
+            "hits": []
+        }
+    }
+    
+    result = await retrieve_knowledge(
+        knowledge_id="lib_123",
+        query="no results query",
+        top_k=5
+    )
+    
+    assert "records" in result
+    assert len(result["records"]) == 0
+
+@pytest.mark.asyncio
+async def test_retrieve_knowledge_nonexistent_knowledge(mock_es_client):
+    # 设置知识库不存在的情况
+    mock_es_client.exists.return_value = False
+    
+    result = await retrieve_knowledge(
+        knowledge_id="nonexistent_lib",
+        query="test query"
+    )
+    
+    # 验证结果
+    assert "records" in result
+    assert len(result["records"]) == 0
+    
+    # 验证不调用其他方法
+    mock_es_client.get.assert_not_called()
+    mock_es_client.search.assert_not_called() 

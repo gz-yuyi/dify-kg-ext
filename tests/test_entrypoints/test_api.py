@@ -148,4 +148,153 @@ def test_search_knowledge():
             query=request.query,
             library_id=request.library_id,
             limit=request.limit
-        ) 
+        )
+
+def test_retrieval_endpoint():
+    with patch('dify_kg_ext.entrypoints.api.check_knowledge_exists') as mock_check, \
+         patch('dify_kg_ext.entrypoints.api.retrieve_knowledge') as mock_retrieve:
+        
+        # 设置知识库存在并返回结果
+        mock_check.return_value = True
+        mock_records = {
+            "records": [
+                {
+                    "content": "Sample content for retrieval",
+                    "score": 0.85,
+                    "title": "Sample Title",
+                    "metadata": {
+                        "document_id": "doc_123",
+                        "category_id": "cat_456",
+                        "knowledge_type": "faq"
+                    }
+                }
+            ]
+        }
+        mock_retrieve.return_value = mock_records
+        
+        # 准备测试请求
+        request_data = {
+            "knowledge_id": "lib_123",
+            "query": "test retrieval query",
+            "retrieval_setting": {
+                "top_k": 5,
+                "score_threshold": 0.6
+            }
+        }
+        
+        # 添加授权头
+        headers = {"Authorization": "Bearer your-api-key"}
+        
+        # 发送请求
+        response = client.post("/retrieval", json=request_data, headers=headers)
+        
+        # 验证响应
+        assert response.status_code == 200
+        assert response.json() == mock_records
+        
+        # 验证函数调用
+        mock_check.assert_called_once_with(request_data["knowledge_id"])
+        mock_retrieve.assert_called_once_with(
+            knowledge_id=request_data["knowledge_id"],
+            query=request_data["query"],
+            top_k=request_data["retrieval_setting"]["top_k"],
+            score_threshold=request_data["retrieval_setting"]["score_threshold"],
+            metadata_condition=None
+        )
+
+def test_retrieval_nonexistent_knowledge():
+    with patch('dify_kg_ext.entrypoints.api.check_knowledge_exists') as mock_check:
+        # 设置知识库不存在
+        mock_check.return_value = False
+        
+        # 准备测试请求
+        request_data = {
+            "knowledge_id": "nonexistent_lib",
+            "query": "test query",
+            "retrieval_setting": {
+                "top_k": 5,
+                "score_threshold": 0.6
+            }
+        }
+        
+        # 添加授权头
+        headers = {"Authorization": "Bearer your-api-key"}
+        
+        # 发送请求
+        response = client.post("/retrieval", json=request_data, headers=headers)
+        
+        # 验证响应
+        assert response.status_code == 404
+        assert response.json()["detail"]["error_code"] == 2001
+        assert "knowledge does not exist" in response.json()["detail"]["error_msg"]
+
+def test_retrieval_invalid_auth():
+    # 没有授权头
+    request_data = {
+        "knowledge_id": "lib_123",
+        "query": "test query",
+        "retrieval_setting": {
+            "top_k": 5,
+            "score_threshold": 0.6
+        }
+    }
+    
+    response = client.post("/retrieval", json=request_data)
+    assert response.status_code == 403
+    assert response.json()["detail"]["error_code"] == 1001
+    
+    # 错误格式的授权头
+    headers = {"Authorization": "InvalidFormat"}
+    response = client.post("/retrieval", json=request_data, headers=headers)
+    assert response.status_code == 403
+    assert response.json()["detail"]["error_code"] == 1001
+    
+    # 无效的API密钥
+    headers = {"Authorization": "Bearer invalid-key"}
+    response = client.post("/retrieval", json=request_data, headers=headers)
+    assert response.status_code == 403
+    assert response.json()["detail"]["error_code"] == 1002
+
+def test_retrieval_with_metadata_condition():
+    with patch('dify_kg_ext.entrypoints.api.check_knowledge_exists') as mock_check, \
+         patch('dify_kg_ext.entrypoints.api.retrieve_knowledge') as mock_retrieve:
+        
+        # 设置知识库存在并返回结果
+        mock_check.return_value = True
+        mock_retrieve.return_value = {"records": []}
+        
+        # 准备带元数据条件的测试请求
+        request_data = {
+            "knowledge_id": "lib_123",
+            "query": "test query with metadata",
+            "retrieval_setting": {
+                "top_k": 5,
+                "score_threshold": 0.6
+            },
+            "metadata_condition": {
+                "logical_operator": "and",
+                "conditions": [
+                    {
+                        "name": ["category"],
+                        "comparison_operator": "contains",
+                        "value": "test"
+                    }
+                ]
+            }
+        }
+        
+        # 添加授权头
+        headers = {"Authorization": "Bearer your-api-key"}
+        
+        # 发送请求
+        response = client.post("/retrieval", json=request_data, headers=headers)
+        
+        # 验证响应
+        assert response.status_code == 200
+        
+        # 验证元数据条件传递
+        mock_retrieve.assert_called_once()
+        _, kwargs = mock_retrieve.call_args
+        assert "metadata_condition" in kwargs
+        assert kwargs["metadata_condition"].logical_operator == "and"
+        assert len(kwargs["metadata_condition"].conditions) == 1 
