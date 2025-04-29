@@ -134,6 +134,7 @@ async def test_unbind_knowledge_from_library(mock_es_client):
 async def test_search_knowledge(mock_es_client, mock_embedding):
     # Set up mock response for get operation
     mock_es_client.get.return_value = {
+        "found": True,
         "_source": {
             "category_id": ["cat_1", "cat_2"]
         }
@@ -197,4 +198,5 @@ async def test_search_knowledge(mock_es_client, mock_embedding):
     # Verify result structure
     assert "segments" in result
     assert len(result["segments"]) == 1
+    assert isinstance(result["segments"][0], Knowledge)
     assert result["segments"][0].segment_id == "segment_123" 

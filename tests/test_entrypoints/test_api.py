@@ -7,6 +7,7 @@ from dify_kg_ext.dataclasses import (
     KnowledgeDeleteRequest,
     KnowledgeBindBatchRequest,
     KnowledgeUnbindBatchRequest,
+    KnowledgeSearchRequest,
     Answer
 )
 
@@ -109,4 +110,42 @@ def test_unbind_knowledge_batch():
             library_id=request.library_id,
             category_ids=request.category_ids,
             delete_type=request.delete_type
+        )
+
+def test_search_knowledge():
+    with patch('dify_kg_ext.entrypoints.api.search_knowledge') as mock_search:
+        # The es.py implementation returns a dict with "segments" key
+        mock_knowledge = Knowledge(
+            segment_id="segment_123",
+            source="personal",
+            knowledge_type="faq",
+            question="How to search?",
+            similar_questions=["How to find?"],
+            answers=[Answer(content="Test search answer", channels=["channel_a"])],
+            weight=5,
+            document_id="doc_789",
+            keywords=["search", "find"],
+            category_id="cat_456"
+        )
+        # Return dictionary format matching es.py implementation
+        mock_search.return_value = {"segments": [mock_knowledge]}
+        
+        request = KnowledgeSearchRequest(
+            query="search query",
+            library_id="lib_123",
+            limit=5
+        )
+        
+        response = client.post("/knowledge/search", json=request.model_dump())
+        
+        assert response.status_code == 200
+        result = response.json()
+        assert result["code"] == 200
+        assert result["msg"] == "success"
+        assert "segments" in result["data"]
+        assert len(result["data"]["segments"]) == 1
+        mock_search.assert_called_once_with(
+            query=request.query,
+            library_id=request.library_id,
+            limit=request.limit
         ) 

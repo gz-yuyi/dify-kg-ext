@@ -7,13 +7,17 @@ from dify_kg_ext.dataclasses import (
     KnowledgeUnbindBatchRequest,
     BaseResponse,
     BindBatchResponse,
-    UnbindBatchResponse
+    UnbindBatchResponse,
+    KnowledgeSearchRequest,
+    KnowledgeSearchResponse,
+    KnowledgeSearchResponseData
 )
 from dify_kg_ext.es import (
     index_document, 
     delete_documents, 
     bind_knowledge_to_library, 
-    unbind_knowledge_from_library
+    unbind_knowledge_from_library,
+    search_knowledge
 )
 
 app = FastAPI()
@@ -74,4 +78,26 @@ async def unbind_knowledge_batch(request: KnowledgeUnbindBatchRequest):
         "code": 200,
         "msg": "success",
         "data": result
+    }
+
+@app.post("/knowledge/search", response_model=KnowledgeSearchResponse)
+async def search_knowledge_endpoint(request: KnowledgeSearchRequest):
+    """
+    搜索知识条目
+    """
+    result = await search_knowledge(
+        query=request.query,
+        library_id=request.library_id,
+        limit=request.limit
+    )
+    
+    # Convert Pydantic objects to dictionaries for serialization
+    segments_dict = [segment.model_dump() for segment in result["segments"]]
+    
+    return {
+        "code": 200,
+        "msg": "success",
+        "data": {
+            "segments": segments_dict
+        }
     } 

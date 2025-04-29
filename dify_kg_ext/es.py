@@ -260,7 +260,9 @@ async def bind_knowledge_to_library(library_id: str, category_ids: List[str]):
         "library_id": library_id,
         "category_id": category_ids,
     }
-    await es_client.index(index=BINDING_INDEX, document=binding_doc, refresh=True)
+    await es_client.index(
+        index=BINDING_INDEX, document=binding_doc, refresh=True, id=library_id
+    )
     return {"success_count": 1, "failed_ids": []}
 
 
@@ -304,19 +306,34 @@ async def search_knowledge(query: str, library_id: str, limit: int = 10):
     query_vector = await embedding(query)
 
     # First, get all category_ids bound to this library
-    binding_result = await es_client.get(index=BINDING_INDEX, id=library_id)
+    binding_result = await es_client.get(
+        index=BINDING_INDEX, id=library_id, ignore=[400, 404]
+    )
+
+    if not binding_result.get("found", False):
+        return {"segments": []}
 
     category_ids = binding_result["_source"]["category_id"]
 
     if not category_ids:
         return {"segments": []}
 
-    # Search for matching knowledge using hybrid approach (vector KNN + keyword)
+    # Use script_score query instead of KNN for better compatibility
+    vector_query = {
+        "script_score": {
+            "query": {"terms": {"category_id": category_ids}},
+            "script": {
+                "source": "cosineSimilarity(params.query_vector, 'vector') + 1.0",
+                "params": {"query_vector": query_vector}
+            }
+        }
+    }
+
+    # Search for matching knowledge
     vector_results = await es_client.search(
         index=VECTOR_INDEX,
-        size=limit,
-        knn={"vector": {"vector": query_vector, "k": limit}},
-        filter={"terms": {"category_id": category_ids}},
+        query=vector_query,
+        size=limit
     )
 
     # Extract unique segment_ids from results
