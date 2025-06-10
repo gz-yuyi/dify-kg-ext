@@ -30,4 +30,4 @@ if os.getenv("SMALL_MODEL_BACKEND") == "xinference":
 elif os.getenv("SMALL_MODEL_BACKEND") == "siliconflow":
     from .siliconflow import *
 else:
-    raise ValueError("SMALL_MODEL_BACKEND not set or invalid")
+    from .xinference import *
