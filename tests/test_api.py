@@ -12,14 +12,14 @@ from dify_kg_ext.dataclasses.doc_parse import (
     AnalyzingDocumentRequest,
     UploadDocumentRequest,
 )
-from dify_kg_ext.entrypoints.api import app
+from dify_kg_ext.api import app
 from fastapi.testclient import TestClient
 
 client = TestClient(app, raise_server_exceptions=False)
 
 
 def test_update_knowledge():
-    with patch("dify_kg_ext.entrypoints.api.index_document") as mock_index:
+    with patch("dify_kg_ext.api.index_document") as mock_index:
         mock_index.return_value = "segment_123"
 
         knowledge = Knowledge(
@@ -40,7 +40,7 @@ def test_update_knowledge():
 
 
 def test_update_knowledge_failure():
-    with patch("dify_kg_ext.entrypoints.api.index_document") as mock_index:
+    with patch("dify_kg_ext.api.index_document") as mock_index:
         mock_index.return_value = None
 
         knowledge = Knowledge(
@@ -63,7 +63,7 @@ def test_update_knowledge_failure():
 
 
 def test_delete_knowledge():
-    with patch("dify_kg_ext.entrypoints.api.delete_documents") as mock_delete:
+    with patch("dify_kg_ext.api.delete_documents") as mock_delete:
         mock_delete.return_value = None
 
         request = KnowledgeDeleteRequest(segment_ids=["segment_123", "segment_456"])
@@ -76,7 +76,7 @@ def test_delete_knowledge():
 
 
 def test_bind_knowledge_batch():
-    with patch("dify_kg_ext.entrypoints.api.bind_knowledge_to_library") as mock_bind:
+    with patch("dify_kg_ext.api.bind_knowledge_to_library") as mock_bind:
         mock_result = {"success_count": 5, "failed_ids": []}
         mock_bind.return_value = mock_result
 
@@ -95,7 +95,7 @@ def test_bind_knowledge_batch():
 
 def test_unbind_knowledge_batch():
     with patch(
-        "dify_kg_ext.entrypoints.api.unbind_knowledge_from_library"
+        "dify_kg_ext.api.unbind_knowledge_from_library"
     ) as mock_unbind:
         mock_result = {"success_count": 3, "failed_ids": []}
         mock_unbind.return_value = mock_result
@@ -116,7 +116,7 @@ def test_unbind_knowledge_batch():
 
 
 def test_search_knowledge():
-    with patch("dify_kg_ext.entrypoints.api.search_knowledge") as mock_search:
+    with patch("dify_kg_ext.api.search_knowledge") as mock_search:
         # The es.py implementation returns a dict with "segments" key
         mock_knowledge = Knowledge(
             segment_id="segment_123",
@@ -195,9 +195,9 @@ def test_root_endpoint():
 def test_retrieval_endpoint_basic():
     """测试基本的检索功能"""
     with patch(
-        "dify_kg_ext.entrypoints.api.check_knowledge_exists"
+        "dify_kg_ext.api.check_knowledge_exists"
     ) as mock_check, patch(
-        "dify_kg_ext.entrypoints.api.retrieve_knowledge"
+        "dify_kg_ext.api.retrieve_knowledge"
     ) as mock_retrieve:
         # 设置知识库存在并返回结果
         mock_check.return_value = True
@@ -256,9 +256,9 @@ def test_retrieval_endpoint_basic():
 def test_retrieval_with_dify_api_key():
     """测试使用Dify风格的API密钥（长度>10位）"""
     with patch(
-        "dify_kg_ext.entrypoints.api.check_knowledge_exists"
+        "dify_kg_ext.api.check_knowledge_exists"
     ) as mock_check, patch(
-        "dify_kg_ext.entrypoints.api.retrieve_knowledge"
+        "dify_kg_ext.api.retrieve_knowledge"
     ) as mock_retrieve:
         mock_check.return_value = True
         mock_retrieve.return_value = {"records": []}
@@ -280,7 +280,7 @@ def test_retrieval_with_dify_api_key():
 
 def test_retrieval_nonexistent_knowledge():
     """测试不存在的知识库"""
-    with patch("dify_kg_ext.entrypoints.api.check_knowledge_exists") as mock_check:
+    with patch("dify_kg_ext.api.check_knowledge_exists") as mock_check:
         # 设置知识库不存在
         mock_check.return_value = False
 
@@ -341,9 +341,9 @@ def test_retrieval_authentication_scenarios():
 def test_retrieval_with_metadata_condition():
     """测试带元数据过滤条件的检索"""
     with patch(
-        "dify_kg_ext.entrypoints.api.check_knowledge_exists"
+        "dify_kg_ext.api.check_knowledge_exists"
     ) as mock_check, patch(
-        "dify_kg_ext.entrypoints.api.retrieve_knowledge"
+        "dify_kg_ext.api.retrieve_knowledge"
     ) as mock_retrieve:
         # 设置知识库存在并返回结果
         mock_check.return_value = True
@@ -386,9 +386,9 @@ def test_retrieval_with_metadata_condition():
 def test_retrieval_with_complex_metadata():
     """测试复杂元数据过滤条件"""
     with patch(
-        "dify_kg_ext.entrypoints.api.check_knowledge_exists"
+        "dify_kg_ext.api.check_knowledge_exists"
     ) as mock_check, patch(
-        "dify_kg_ext.entrypoints.api.retrieve_knowledge"
+        "dify_kg_ext.api.retrieve_knowledge"
     ) as mock_retrieve:
         mock_check.return_value = True
         mock_retrieve.return_value = {"records": []}
@@ -424,9 +424,9 @@ def test_retrieval_with_complex_metadata():
 def test_retrieval_edge_cases():
     """测试边界情况"""
     with patch(
-        "dify_kg_ext.entrypoints.api.check_knowledge_exists"
+        "dify_kg_ext.api.check_knowledge_exists"
     ) as mock_check, patch(
-        "dify_kg_ext.entrypoints.api.retrieve_knowledge"
+        "dify_kg_ext.api.retrieve_knowledge"
     ) as mock_retrieve:
         mock_check.return_value = True
 
@@ -492,9 +492,9 @@ def test_retrieval_parameter_validation():
 def test_retrieval_internal_error():
     """测试内部错误处理"""
     with patch(
-        "dify_kg_ext.entrypoints.api.check_knowledge_exists"
+        "dify_kg_ext.api.check_knowledge_exists"
     ) as mock_check, patch(
-        "dify_kg_ext.entrypoints.api.retrieve_knowledge"
+        "dify_kg_ext.api.retrieve_knowledge"
     ) as mock_retrieve:
         mock_check.return_value = True
         # 模拟内部错误
@@ -522,10 +522,10 @@ def test_retrieval_internal_error():
 def test_retrieval_logging():
     """测试日志记录功能"""
     with patch(
-        "dify_kg_ext.entrypoints.api.check_knowledge_exists"
+        "dify_kg_ext.api.check_knowledge_exists"
     ) as mock_check, patch(
-        "dify_kg_ext.entrypoints.api.retrieve_knowledge"
-    ) as mock_retrieve, patch("dify_kg_ext.entrypoints.api.logger") as mock_logger:
+        "dify_kg_ext.api.retrieve_knowledge"
+    ) as mock_retrieve, patch("dify_kg_ext.api.logger") as mock_logger:
         mock_check.return_value = True
         mock_retrieve.return_value = {
             "records": [
@@ -560,9 +560,9 @@ def test_retrieval_concurrent_requests():
     import time
 
     with patch(
-        "dify_kg_ext.entrypoints.api.check_knowledge_exists"
+        "dify_kg_ext.api.check_knowledge_exists"
     ) as mock_check, patch(
-        "dify_kg_ext.entrypoints.api.retrieve_knowledge"
+        "dify_kg_ext.api.retrieve_knowledge"
     ) as mock_retrieve:
         mock_check.return_value = True
         mock_retrieve.return_value = {"records": []}
@@ -604,9 +604,9 @@ def test_retrieval_concurrent_requests():
 def test_backward_compatibility():
     """测试向后兼容性"""
     with patch(
-        "dify_kg_ext.entrypoints.api.check_knowledge_exists"
+        "dify_kg_ext.api.check_knowledge_exists"
     ) as mock_check, patch(
-        "dify_kg_ext.entrypoints.api.retrieve_knowledge"
+        "dify_kg_ext.api.retrieve_knowledge"
     ) as mock_retrieve:
         mock_check.return_value = True
         mock_retrieve.return_value = {"records": []}
@@ -663,7 +663,7 @@ def test_upload_document():
 def test_analyzing_document():
     """Test document parsing endpoint"""
     # Mock the Celery task
-    with patch("dify_kg_ext.entrypoints.api.parse_document_task.delay") as mock_task:
+    with patch("dify_kg_ext.api.parse_document_task.delay") as mock_task:
         # Setup mock task result
         mock_result = mock_task.return_value
         mock_result.get.return_value = [
@@ -698,7 +698,7 @@ def test_analyzing_document():
 
 def test_analyzing_document_with_custom_config():
     """Test document parsing with custom parser configuration"""
-    with patch("dify_kg_ext.entrypoints.api.parse_document_task.delay") as mock_task:
+    with patch("dify_kg_ext.api.parse_document_task.delay") as mock_task:
         mock_result = mock_task.return_value
         mock_result.get.return_value = [{"text": "Chunk content"}]
 
@@ -725,7 +725,7 @@ def test_analyzing_document_with_custom_config():
 
 def test_analyzing_document_timeout():
     """Test document parsing timeout handling"""
-    with patch("dify_kg_ext.entrypoints.api.parse_document_task.delay") as mock_task:
+    with patch("dify_kg_ext.api.parse_document_task.delay") as mock_task:
         mock_result = mock_task.return_value
         mock_result.get.side_effect = TimeoutError("Task timed out")
 
@@ -747,7 +747,7 @@ def test_analyzing_document_timeout():
 
 def test_analyzing_document_invalid_file():
     """Test handling of invalid file paths"""
-    with patch("dify_kg_ext.entrypoints.api.parse_document_task.delay") as mock_task:
+    with patch("dify_kg_ext.api.parse_document_task.delay") as mock_task:
         mock_result = mock_task.return_value
         mock_result.get.side_effect = FileNotFoundError("File not found")
 

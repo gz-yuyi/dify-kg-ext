@@ -3,7 +3,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 import pytest_asyncio
 from dify_kg_ext.dataclasses import Answer, Knowledge
-from dify_kg_ext.entrypoints.api import app
+from dify_kg_ext.api import app
 from fastapi.testclient import TestClient
 
 

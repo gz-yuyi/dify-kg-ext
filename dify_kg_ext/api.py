@@ -22,7 +22,7 @@ from dify_kg_ext.dataclasses.doc_parse import (
     UploadDocumentRequest,
     UploadDocumentResponse,
 )
-from dify_kg_ext.entrypoints.worker import parse_document_task
+from dify_kg_ext.worker import parse_document_task
 from dify_kg_ext.es import (
     bind_knowledge_to_library,
     check_knowledge_exists,
