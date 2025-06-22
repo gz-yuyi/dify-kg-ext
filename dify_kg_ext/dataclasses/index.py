@@ -420,4 +420,3 @@ class ErrorResponse(BaseModel):
                 "error_msg": "Invalid Authorization header format. Expected 'Bearer <api-key>' format.",
             }
         }
-

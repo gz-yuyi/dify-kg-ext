@@ -1,5 +1,7 @@
 import click
 import uvicorn
+import subprocess
+import sys
 
 
 @click.group()
@@ -34,6 +36,36 @@ def serve(host, port, reload):
     click.echo(f"  API Endpoint: http://{host}:{port}/retrieval")
     click.echo("  API Key: Any string longer than 10 characters")
     uvicorn.run("dify_kg_ext.entrypoints.api:app", host=host, port=port, reload=reload)
+
+
+@cli.command()
+@click.option("--concurrency", default=4, help="Number of worker processes")
+@click.option("--loglevel", default="info", help="Log level (debug, info, warning, error)")
+@click.option("--queues", default="celery", help="Comma separated list of queues to listen on")
+@click.option("--hostname", default="worker1@%h", help="Custom hostname for worker identification")
+def worker(concurrency, loglevel, queues, hostname):
+    """Start the Celery worker for document processing"""
+    click.echo(f"Starting Celery worker with {concurrency} processes")
+    
+    # Build Celery command
+    cmd = [
+        "celery",
+        "-A", "dify_kg_ext.entrypoints.worker",
+        "worker",
+        f"--concurrency={concurrency}",
+        f"--loglevel={loglevel}",
+        f"--queues={queues}",
+        f"--hostname={hostname}"
+    ]
+    
+    # Execute the command
+    try:
+        subprocess.run(cmd, check=True)
+    except subprocess.CalledProcessError as e:
+        click.echo(f"Worker failed with error: {e}", err=True)
+        sys.exit(1)
+    except KeyboardInterrupt:
+        click.echo("\nWorker stopped by user")
 
 
 def main():

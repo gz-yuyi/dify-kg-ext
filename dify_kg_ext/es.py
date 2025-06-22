@@ -462,7 +462,7 @@ async def retrieve_knowledge(
         if (
             score < score_threshold
             or segment_id in segment_id_set
-            or len(segment_id_set) > top_k
+            or len(segment_id_set) >= top_k
         ):
             continue
 
@@ -477,10 +477,10 @@ async def retrieve_knowledge(
 
         knowledge_source = knowledge_doc["_source"]
 
-        if knowledge_source.get(segment_id) in segment_id_set:
+        if segment_id in segment_id_set:
             continue
 
-        segment_id_set.add(knowledge_source.get(segment_id))
+        segment_id_set.add(segment_id)
 
         # 创建记录
         question = knowledge_source.get("question", "")
@@ -490,7 +490,7 @@ async def retrieve_knowledge(
             content = answers[0]['content']
         else:
             # TODO 没有考虑渠道字段
-            content = f"Qestion: {question}\n\nAnswer: {answers[0]['content']}"
+            content = f"Question: {question}\n\nAnswer: {answers[0]['content']}"
 
         title = json.dumps(knowledge_source, ensure_ascii=False)
 
@@ -504,4 +504,3 @@ async def retrieve_knowledge(
         )
 
     return {"records": records}
-
