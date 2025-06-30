@@ -1,6 +1,6 @@
-from typing import List, Literal, Optional, Dict, Any
+from typing import Any, Dict, List, Literal, Optional
 
-from pydantic import BaseModel, Field, field_validator, RootModel
+from pydantic import BaseModel, Field, RootModel, field_validator
 
 
 class Answer(BaseModel):
@@ -239,11 +239,7 @@ class KnowledgeSearchRequest(BaseModel):
 
     class Config:
         json_schema_extra = {
-            "example": {
-                "query": "社保问题",
-                "library_id": "lib_123456",
-                "limit": 10
-            }
+            "example": {"query": "社保问题", "library_id": "lib_123456", "limit": 10}
         }
 
 
@@ -259,7 +255,10 @@ class KnowledgeSearchResponseData(BaseModel):
                         "source": "personal",
                         "knowledge_type": "faq",
                         "question": "社保征缴相关问题指引口径？",
-                        "similar_questions": ["如何了解社保征缴相关问题？", "社保缴费问题如何咨询？"],
+                        "similar_questions": [
+                            "如何了解社保征缴相关问题？",
+                            "社保缴费问题如何咨询？",
+                        ],
                         "answers": [
                             {
                                 "content": "您好，在办理社保缴费登记、申报社保缴费业务时如有疑问，可拨打0769-12366纳税缴费服务热线咨询。",
@@ -291,7 +290,10 @@ class KnowledgeSearchResponse(BaseResponse):
                             "source": "personal",
                             "knowledge_type": "faq",
                             "question": "社保征缴相关问题指引口径？",
-                            "similar_questions": ["如何了解社保征缴相关问题？", "社保缴费问题如何咨询？"],
+                            "similar_questions": [
+                                "如何了解社保征缴相关问题？",
+                                "社保缴费问题如何咨询？",
+                            ],
                             "answers": [
                                 {
                                     "content": "您好，在办理社保缴费登记、申报社保缴费业务时如有疑问，可拨打0769-12366纳税缴费服务热线咨询。",
@@ -322,15 +324,19 @@ class MetadataConditions(BaseModel):
 
 class RetrievalSetting(BaseModel):
     top_k: int = Field(..., gt=0, le=100, description="返回结果的最大数量")
-    score_threshold: float = Field(..., ge=0, le=1, description="结果与查询的相关性分数阈值")
+    score_threshold: float = Field(
+        ..., ge=0, le=1, description="结果与查询的相关性分数阈值"
+    )
 
 
 class RetrievalRequest(BaseModel):
     knowledge_id: str = Field(..., description="知识库唯一ID")
     query: str = Field(..., min_length=1, description="用户查询")
     retrieval_setting: RetrievalSetting = Field(..., description="检索参数")
-    metadata_condition: Optional[MetadataConditions] = Field(None, description="元数据过滤条件")
-    
+    metadata_condition: Optional[MetadataConditions] = Field(
+        None, description="元数据过滤条件"
+    )
+
     @field_validator("query")
     @classmethod
     def validate_query_not_empty(cls, v):
@@ -343,16 +349,14 @@ class RetrievalRequest(BaseModel):
             "example": {
                 "knowledge_id": "your-knowledge-id",
                 "query": "社保问题",
-                "retrieval_setting": {
-                    "top_k": 2,
-                    "score_threshold": 0.5
-                }
+                "retrieval_setting": {"top_k": 2, "score_threshold": 0.5},
             }
         }
 
 
 class RecordMetadata(RootModel):
     """文档元数据"""
+
     root: Dict[str, Any] = Field(default_factory=dict)
 
 
@@ -367,13 +371,21 @@ class Record(BaseModel):
             "example": {
                 "metadata": {
                     "path": "s3://dify/knowledge.txt",
-                    "description": "dify knowledge document"
+                    "description": "dify knowledge document",
                 },
                 "score": 0.98,
                 "title": "knowledge.txt",
-                "content": "This is the document for external knowledge."
+                "content": "This is the document for external knowledge.",
             }
         }
+
+    # validate title as string
+    @field_validator("title")
+    @classmethod
+    def validate_channels_not_empty(cls, v):
+        if not isinstance(v, str):
+            return ""
+        return v
 
 
 class RetrievalResponse(BaseModel):
@@ -386,11 +398,11 @@ class RetrievalResponse(BaseModel):
                     {
                         "metadata": {
                             "path": "s3://dify/knowledge.txt",
-                            "description": "dify knowledge document"
+                            "description": "dify knowledge document",
                         },
                         "score": 0.98,
                         "title": "knowledge.txt",
-                        "content": "This is the document for external knowledge."
+                        "content": "This is the document for external knowledge.",
                     }
                 ]
             }
@@ -405,6 +417,7 @@ class ErrorResponse(BaseModel):
         json_schema_extra = {
             "example": {
                 "error_code": 1001,
-                "error_msg": "Invalid Authorization header format. Expected 'Bearer <api-key>' format."
+                "error_msg": "Invalid Authorization header format. Expected 'Bearer <api-key>' format.",
             }
         }
+

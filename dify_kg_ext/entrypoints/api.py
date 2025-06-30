@@ -260,7 +260,7 @@ async def retrieval(request: RetrievalRequest, api_key: str = Depends(verify_api
         record = Record(
             content=record_data["content"],
             score=record_data["score"],
-            title=record_data["title"],
+            title=record_data["title"] if record_data["title"] else "",
             metadata=record_data.get("metadata", {})
         )
         records.append(record)
