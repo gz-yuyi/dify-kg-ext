@@ -46,12 +46,12 @@ def serve(host, port, reload):
 @click.option("--hostname", default="worker1@%h", help="Custom hostname for worker identification")
 def worker(concurrency, loglevel, queues, hostname):
     """Start the Celery worker for document processing"""
-    # Get RabbitMQ connection details from environment
-    rabbitmq_host = os.getenv("RABBITMQ_HOST", "localhost")
-    rabbitmq_port = os.getenv("RABBITMQ_PORT", "5672")
+    # Get Redis connection details from environment
+    redis_host = os.getenv("REDIS_HOST", "localhost")
+    redis_port = os.getenv("REDIS_PORT", "6379")
     
     click.echo(f"Starting Celery worker with {concurrency} processes")
-    click.echo(f"Connecting to RabbitMQ at {rabbitmq_host}:{rabbitmq_port}")
+    click.echo(f"Connecting to Redis at {redis_host}:{redis_port}")
     
     # Build Celery command
     cmd = [
