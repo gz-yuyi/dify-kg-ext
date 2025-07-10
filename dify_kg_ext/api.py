@@ -21,6 +21,7 @@ from dify_kg_ext.dataclasses.doc_parse import (
     AnalyzingDocumentResponse,
     UploadDocumentRequest,
     UploadDocumentResponse,
+    TextChunkingRequest,
 )
 from dify_kg_ext.worker import parse_document_task
 from dify_kg_ext.es import (
@@ -33,6 +34,8 @@ from dify_kg_ext.es import (
     unbind_knowledge_from_library,
 )
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
+from tempfile import NamedTemporaryFile
+import os
 from fastapi.responses import JSONResponse
 
 # Configure logging
@@ -369,3 +372,51 @@ async def analyzing_document(request: AnalyzingDocumentRequest):
                 "error_msg": f"Document parsing failed: {str(e)}",
             },
         )
+
+
+@app.post("/chunk_text", response_model=AnalyzingDocumentResponse)
+async def chunk_text(request: TextChunkingRequest):
+    """
+    直接对文本进行分片处理
+    """
+    # 创建临时文件保存文本
+    with NamedTemporaryFile(mode="w+", suffix=".txt", delete=False) as temp_file:
+        temp_file.write(request.text)
+        temp_file_path = temp_file.name
+    
+    # 构建解析参数
+    parse_kwargs = {}
+    if request.parser_flag == 1 and request.parser_config:
+        if "chunk_token_count" in request.parser_config:
+            parse_kwargs["max_tokens"] = request.parser_config["chunk_token_count"]
+        if "task_page_size" in request.parser_config:
+            parse_kwargs["max_num_pages"] = request.parser_config["task_page_size"]
+
+    try:
+        # 调用Celery任务进行文本解析
+        task_result = parse_document_task.delay(temp_file_path, **parse_kwargs)
+        chunks_data = task_result.get(timeout=300)  # 5分钟超时
+
+        # 提取文本内容
+        chunks = []
+        for chunk in chunks_data:
+            if isinstance(chunk, dict) and "text" in chunk:
+                chunks.append(chunk["text"])
+            elif hasattr(chunk, "text"):  # Handle chunk objects
+                chunks.append(chunk.text)
+            else:
+                chunks.append(str(chunk))
+
+        return AnalyzingDocumentResponse(chunks=chunks, sign=True)
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "error_code": 5001,
+                "error_msg": f"Text chunking failed: {str(e)}",
+            },
+        )
+    finally:
+        # 清理临时文件
+        if os.path.exists(temp_file_path):
+            os.unlink(temp_file_path)

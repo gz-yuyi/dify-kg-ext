@@ -193,3 +193,43 @@ class AnalyzingDocumentResponse(BaseModel):
                 "sign": True,
             }
         }
+
+
+class TextChunkingRequest(BaseModel):
+    """Request model for direct text chunking"""
+    text: str = Field(..., description="Text to be chunked", example="This is a long text that needs to be split...")
+    chunk_method: Literal[
+        "naive",
+        "manual",
+        "qa",
+        "table",
+        "paper",
+        "book",
+        "laws",
+        "presentation",
+        "picture",
+        "email",
+    ] = Field(..., description="Text chunking method to use", example="naive")
+    parser_flag: int = Field(
+        ...,
+        description="Flag indicating if parser config should be used (1=true, 0=false)",
+        example=0,
+    )
+    parser_config: Dict[str, Any] = Field(
+        default_factory=dict,
+        description="Configuration settings for the parser",
+        example={"chunk_token_count": 10, "delimiter": "\n"},
+    )
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "text": "This is a sample text to be chunked...",
+                "chunk_method": "naive",
+                "parser_flag": 1,
+                "parser_config": {
+                    "chunk_token_count": 10,
+                    "delimiter": "\n",
+                },
+            }
+        }
