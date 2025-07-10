@@ -197,7 +197,7 @@ class AnalyzingDocumentResponse(BaseModel):
 
 class TextChunkingRequest(BaseModel):
     """Request model for direct text chunking"""
-    text: str = Field(..., description="Text to be chunked", example="This is a long text that needs to be split...")
+    text: str = Field(..., min_length=1, description="Text to be chunked", example="This is a long text that needs to be split...")
     chunk_method: Literal[
         "naive",
         "manual",

@@ -883,7 +883,7 @@ def test_chunk_text_edge_cases():
         "chunk_method": "naive",
         "parser_flag": 0
     })
-    assert response.status_code == 422
+    assert response.status_code == 422  # Validation error for empty text
     
     # Invalid chunk method
     response = client.post("/chunk_text", json={
