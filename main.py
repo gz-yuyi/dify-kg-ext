@@ -2,6 +2,7 @@ import click
 import uvicorn
 import subprocess
 import sys
+import os
 
 
 @click.group()
@@ -45,7 +46,12 @@ def serve(host, port, reload):
 @click.option("--hostname", default="worker1@%h", help="Custom hostname for worker identification")
 def worker(concurrency, loglevel, queues, hostname):
     """Start the Celery worker for document processing"""
+    # Get RabbitMQ connection details from environment
+    rabbitmq_host = os.getenv("RABBITMQ_HOST", "localhost")
+    rabbitmq_port = os.getenv("RABBITMQ_PORT", "5672")
+    
     click.echo(f"Starting Celery worker with {concurrency} processes")
+    click.echo(f"Connecting to RabbitMQ at {rabbitmq_host}:{rabbitmq_port}")
     
     # Build Celery command
     cmd = [
