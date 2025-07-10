@@ -35,7 +35,7 @@ def serve(host, port, reload):
     click.echo("Configure Dify External Knowledge:")
     click.echo(f"  API Endpoint: http://{host}:{port}/retrieval")
     click.echo("  API Key: Any string longer than 10 characters")
-    uvicorn.run("dify_kg_ext.entrypoints.api:app", host=host, port=port, reload=reload)
+    uvicorn.run("dify_kg_ext.api:app", host=host, port=port, reload=reload)
 
 
 @cli.command()
@@ -50,7 +50,7 @@ def worker(concurrency, loglevel, queues, hostname):
     # Build Celery command
     cmd = [
         "celery",
-        "-A", "dify_kg_ext.entrypoints.worker",
+        "-A", "dify_kg_ext.worker",
         "worker",
         f"--concurrency={concurrency}",
         f"--loglevel={loglevel}",
