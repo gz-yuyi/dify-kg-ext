@@ -486,8 +486,8 @@ async def retrieve_knowledge(
         question = knowledge_source.get("question", "")
         answers = knowledge_source.get("answers", [])
 
-        if len(answers) == 0:
-            content = question
+        if not question:
+            content = answers[0]['content']
         else:
             # TODO 没有考虑渠道字段
             content = f"Qestion: {question}\n\nAnswer: {answers[0]['content']}"
