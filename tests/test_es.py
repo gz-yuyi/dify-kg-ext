@@ -230,6 +230,7 @@ async def test_retrieve_knowledge(mock_es_client, mock_embedding):
                 "category_id": "cat_1",
                 "knowledge_type": "faq",
                 "keywords": ["keyword1", "keyword2"],
+                "answers": [{"content": "Sample answer", "channels": ["channel_a"]}],
             },
         },
         # 第三次调用get (第二个知识文档)
