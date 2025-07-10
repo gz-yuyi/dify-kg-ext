@@ -1,5 +1,7 @@
 import os
+
 from celery import Celery
+
 from dify_kg_ext.docling import parse_and_chunk
 
 # Get Redis connection details from environment

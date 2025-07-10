@@ -380,7 +380,7 @@ async def chunk_text(request: TextChunkingRequest):
     直接对文本进行分片处理
     """
     # 创建临时文件保存文本
-    with NamedTemporaryFile(mode="w+", suffix=".txt", delete=False) as temp_file:
+    with NamedTemporaryFile(mode="w+", suffix=".md", delete=False) as temp_file:
         temp_file.write(request.text)
         temp_file.flush()  # Ensure content is written to disk
         temp_file_path = temp_file.name

@@ -2,6 +2,12 @@
 import tiktoken
 from docling.chunking import HybridChunker
 from docling.document_converter import DocumentConverter
+from docling_core.transforms.chunker.tokenizer.openai import OpenAITokenizer
+
+tokenizer = OpenAITokenizer(
+    tokenizer=tiktoken.encoding_for_model("gpt-4o"),
+    max_tokens=128 * 1024,  # context window length required for OpenAI tokenizers
+)
 
 
 def parse_and_chunk(source, **kwargs):
@@ -22,5 +28,6 @@ def parse_and_chunk(source, **kwargs):
     document = result.document
 
     # Chunk document
-    chunker = HybridChunker(tokenizer=tiktoken.encoding_for_model("gpt-4o"))
-    return list(chunker.chunk(document))
+    chunker = HybridChunker(tokenizer=tokenizer)
+    chunks = [chunks.export_json_dict() for chunks in chunker.chunk(document)]
+    return chunks
