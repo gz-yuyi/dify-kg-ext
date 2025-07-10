@@ -34,6 +34,24 @@ python main.py serve --host 0.0.0.0 --port 5001
 - Dify外部知识库API (`/retrieval`端点)
 - 健康检查和API文档
 
+### 启动文档处理Worker
+文档解析需要Celery worker异步处理。启动worker：
+```shell
+python main.py worker
+```
+
+自定义worker选项：
+```shell
+# 使用8个进程
+python main.py worker --concurrency 8
+
+# 调试日志级别
+python main.py worker --loglevel debug
+
+# 监听特定队列
+python main.py worker --queues document_parse
+```
+
 ## 可用命令
 
 ```bash
