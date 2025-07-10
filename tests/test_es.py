@@ -241,6 +241,7 @@ async def test_retrieve_knowledge(mock_es_client, mock_embedding):
                 "document_id": "doc_789",
                 "category_id": "cat_2",
                 "knowledge_type": "segment",
+                "answers": [{"content": "Another answer", "channels": ["channel_b"]}],
             },
         },
     ]
