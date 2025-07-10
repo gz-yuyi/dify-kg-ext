@@ -1,4 +1,5 @@
 from unittest.mock import AsyncMock, patch
+import json
 
 import pytest
 from dify_kg_ext.dataclasses import Answer, Knowledge
