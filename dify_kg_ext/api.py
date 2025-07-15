@@ -509,13 +509,13 @@ async def analyzing_document(request: AnalyzingDocumentRequest):
             
         return AnalyzingDocumentResponse(chunks=chunks, sign=True)
         
-    except FileNotFoundError:
+    except FileNotFoundError as e:
         # 文档不存在或尚未处理完成
         raise HTTPException(
             status_code=404,
             detail={
                 "error_code": 2001,
-                "error_msg": f"Document {request.document_id} not found or not processed yet",
+                "error_msg": str(e),
             },
         )
     except Exception as e:
