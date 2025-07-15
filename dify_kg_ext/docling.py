@@ -24,7 +24,7 @@ def parse_and_chunk(source, **kwargs):
     """
     # Convert document
     converter = DocumentConverter()
-    result = converter.convert(source, **kwargs)
+    result = converter.convert(source)
     document = result.document
 
     # Chunk document

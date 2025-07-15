@@ -174,3 +174,4 @@ cython_debug/
 .pypirc
 .vscode
 .aider*
+local_files
