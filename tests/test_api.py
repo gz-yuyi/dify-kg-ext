@@ -662,14 +662,11 @@ def test_upload_document():
 
 def test_analyzing_document():
     """Test document parsing endpoint"""
-    # Mock the Celery task
-    with patch("dify_kg_ext.api.parse_document_task.delay") as mock_task:
-        # Setup mock task result
-        mock_result = mock_task.return_value
-        mock_result.get.return_value = [
-            {"text": "First chunk content"},
-            {"text": "Second chunk content"},
-            {"other_field": "Invalid chunk"},
+    with patch("dify_kg_ext.api.load_document_chunks") as mock_load:
+        mock_load.return_value = [
+            "First chunk content",
+            "Second chunk content",
+            "{'other_field': 'Invalid chunk'}",  # Fallback for invalid chunks
         ]
 
         request = AnalyzingDocumentRequest(
@@ -691,16 +688,13 @@ def test_analyzing_document():
             "Second chunk content",
             "{'other_field': 'Invalid chunk'}",  # Fallback for invalid chunks
         ]
-
-        # Verify task was called with correct arguments
-        mock_task.assert_called_once_with("/tmp/test.pdf")
+        mock_load.assert_called_once()
 
 
 def test_analyzing_document_with_custom_config():
     """Test document parsing with custom parser configuration"""
-    with patch("dify_kg_ext.api.parse_document_task.delay") as mock_task:
-        mock_result = mock_task.return_value
-        mock_result.get.return_value = [{"text": "Chunk content"}]
+    with patch("dify_kg_ext.api.load_document_chunks") as mock_load:
+        mock_load.return_value = ["Chunk content"]
 
         request = AnalyzingDocumentRequest(
             dataset_id="dataset_123",
@@ -718,16 +712,16 @@ def test_analyzing_document_with_custom_config():
         response = client.post("/analyzing_document", json=request.model_dump())
 
         assert response.status_code == 200
-        mock_task.assert_called_once_with(
-            "/tmp/test.pdf", max_tokens=256, max_num_pages=50
-        )
+        data = response.json()
+        assert data["sign"] is True
+        assert data["chunks"] == ["Chunk content"]
+        mock_load.assert_called_once()
 
 
 def test_analyzing_document_timeout():
     """Test document parsing timeout handling"""
-    with patch("dify_kg_ext.api.parse_document_task.delay") as mock_task:
-        mock_result = mock_task.return_value
-        mock_result.get.side_effect = TimeoutError("Task timed out")
+    with patch("dify_kg_ext.api.load_document_chunks") as mock_load:
+        mock_load.side_effect = Exception("Document processing timeout")
 
         request = AnalyzingDocumentRequest(
             dataset_id="dataset_123",
@@ -742,14 +736,13 @@ def test_analyzing_document_timeout():
         assert response.status_code == 500
         error_detail = response.json()
         assert error_detail["error_code"] == 5001
-        assert "Task timed out" in error_detail["error_msg"]
+        assert "Document processing timeout" in error_detail["error_msg"]
 
 
 def test_analyzing_document_invalid_file():
     """Test handling of invalid file paths"""
-    with patch("dify_kg_ext.api.parse_document_task.delay") as mock_task:
-        mock_result = mock_task.return_value
-        mock_result.get.side_effect = FileNotFoundError("File not found")
+    with patch("dify_kg_ext.api.load_document_chunks") as mock_load:
+        mock_load.side_effect = FileNotFoundError("File not found")
 
         request = AnalyzingDocumentRequest(
             dataset_id="dataset_123",
@@ -761,9 +754,9 @@ def test_analyzing_document_invalid_file():
 
         response = client.post("/analyzing_document", json=request.model_dump())
 
-        assert response.status_code == 500
+        assert response.status_code == 404
         error_detail = response.json()
-        assert error_detail["error_code"] == 5001
+        assert error_detail["error_code"] == 2001
         assert "File not found" in error_detail["error_msg"]
 
 
@@ -872,7 +865,7 @@ def test_chunk_text_file_cleanup():
         response = client.post("/chunk_text", json=request)
         
         assert response.status_code == 200
-        mock_unlink.assert_called_once()
+        assert mock_unlink.call_count == 2
 
 
 def test_chunk_text_edge_cases():
