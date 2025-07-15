@@ -648,7 +648,7 @@ def test_api_documentation_endpoints():
 def test_upload_document():
     """Test document upload endpoint"""
     request = UploadDocumentRequest(file_path="http://example.com/test.pdf")
-    response = client.post("/upload_document", json=request.model_dump())
+    response = client.post("/upload_documents", json=request.model_dump())
 
     assert response.status_code == 200
     data = response.json()
