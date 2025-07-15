@@ -303,7 +303,7 @@ async def root():
     }
 
 
-@app.post("/upload_document", response_model=UploadDocumentResponse)
+@app.post("/upload_documents", response_model=UploadDocumentResponse)
 async def upload_document(request: UploadDocumentRequest):
     """
     上传文档并返回文档ID
