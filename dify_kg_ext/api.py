@@ -491,7 +491,7 @@ async def upload_document(request: UploadDocumentRequest, background_tasks: Back
     )
 
 
-@app.post("/analyzing_document", response_model=AnalyzingDocumentResponse)
+@app.post("/analyzing_documents", response_model=AnalyzingDocumentResponse)
 async def analyzing_document(request: AnalyzingDocumentRequest):
     """
     从存储中读取已解析的文档分块结果

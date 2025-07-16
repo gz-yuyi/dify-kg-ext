@@ -130,7 +130,7 @@ class AnalyzingDocumentRequest(BaseModel):
         "email",
     ] = Field(..., description="Document parsing method to use", example="laws")
     parser_flag: int = Field(
-        ...,
+        0,
         description="Flag indicating if parser config should be used (1=true, 0=false)",
         example=0,
     )
