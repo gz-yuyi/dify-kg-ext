@@ -1,11 +1,14 @@
-import logging
-import uuid
-import os
+import io
 import json
-import asyncio
+import logging
+import os
 import time
+import uuid
 from pathlib import Path
-from typing import Optional
+from tempfile import NamedTemporaryFile
+
+from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException, Request
+from fastapi.responses import JSONResponse
 
 from dify_kg_ext.dataclasses import (
     BaseResponse,
@@ -25,11 +28,10 @@ from dify_kg_ext.dataclasses import (
 from dify_kg_ext.dataclasses.doc_parse import (
     AnalyzingDocumentRequest,
     AnalyzingDocumentResponse,
+    TextChunkingRequest,
     UploadDocumentRequest,
     UploadDocumentResponse,
-    TextChunkingRequest,
 )
-from dify_kg_ext.worker import parse_document_task
 from dify_kg_ext.es import (
     bind_knowledge_to_library,
     check_knowledge_exists,
@@ -39,9 +41,7 @@ from dify_kg_ext.es import (
     search_knowledge,
     unbind_knowledge_from_library,
 )
-from fastapi import Depends, FastAPI, Header, HTTPException, Request, BackgroundTasks
-from tempfile import NamedTemporaryFile
-from fastapi.responses import JSONResponse
+from dify_kg_ext.worker import chunk_document_task, parse_document_task
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -57,7 +57,7 @@ def ensure_storage_structure():
     """确保存储目录结构存在"""
     chunks_dir = LOCAL_FILES_DIR / CHUNKS_SUBDIR
     partial_chunks_dir = LOCAL_FILES_DIR / PARTIAL_CHUNKS_SUBDIR
-    
+
     chunks_dir.mkdir(parents=True, exist_ok=True)
     partial_chunks_dir.mkdir(parents=True, exist_ok=True)
 
@@ -72,6 +72,7 @@ async def download_file_from_url(url: str, destination: Path) -> bool:
     """从URL下载文件到本地路径"""
     try:
         import httpx
+
         async with httpx.AsyncClient() as client:
             response = await client.get(url)
             response.raise_for_status()
@@ -83,119 +84,214 @@ async def download_file_from_url(url: str, destination: Path) -> bool:
 
 
 async def process_document_async(
-    document_id: str, 
-    part_document_id: str, 
-    file_path: str, 
-    parser_config: dict = None
+    document_id: str, part_document_id: str, file_path: str, parser_config: dict = None
 ):
-    """异步处理文档并保存结果"""
+    """异步处理文档并保存解析结果"""
     try:
         # 确保存储目录存在
         ensure_storage_structure()
-        
+
         # 提取文件扩展名
         file_extension = Path(file_path).suffix.lower()
         if not file_extension:
             # 如果无法确定扩展名，尝试从URL内容类型检测
             file_extension = ".pdf"  # 默认使用PDF
-            
+
         # 下载文件到临时位置，保持原始扩展名
         temp_file = LOCAL_FILES_DIR / "temp" / f"{document_id}_temp{file_extension}"
         temp_file.parent.mkdir(parents=True, exist_ok=True)
-        
-        if file_path.startswith(('http://', 'https://')):
+
+        if file_path.startswith(("http://", "https://")):
             success = await download_file_from_url(file_path, temp_file)
             if not success:
                 raise Exception("Failed to download file")
         else:
             # 本地文件，直接复制
             import shutil
+
             shutil.copy2(file_path, temp_file)
-        
+
         # 构建解析参数
         parse_kwargs = {}
         if parser_config:
-            if "chunk_token_count" in parser_config:
-                parse_kwargs["max_tokens"] = parser_config["chunk_token_count"]
             if "task_page_size" in parser_config:
                 parse_kwargs["max_num_pages"] = parser_config["task_page_size"]
-        
+
         # 调用Celery任务进行文档解析
         task_result = parse_document_task.delay(str(temp_file), **parse_kwargs)
-        chunks_data = task_result.get(timeout=300)  # 5分钟超时
-        
-        # 提取文本内容
-        chunks = []
-        for chunk in chunks_data:
-            if isinstance(chunk, dict) and "text" in chunk:
-                chunks.append(chunk["text"])
-            elif hasattr(chunk, "text"):
-                chunks.append(chunk.text)
-            else:
-                chunks.append(str(chunk))
-        
-        # 保存完整结果
+        document_json = task_result.get(timeout=300)  # 5分钟超时
+
+        # 保存解析后的文档（不立即分块）
         full_result_path = get_document_storage_path(document_id, partial=False)
-        with open(full_result_path, 'w', encoding='utf-8') as f:
-            json.dump({
-                "document_id": document_id,
-                "chunks": chunks,
-                "total_chunks": len(chunks),
-                "processed_at": time.strftime("%Y-%m-%d %H:%M:%S"),
-                "status": "completed"
-            }, f, ensure_ascii=False, indent=2)
-        
-        # 保存部分结果（前10个chunk或全部，取决于总数）
-        partial_chunks = chunks[:10] if len(chunks) > 10 else chunks
+        with open(full_result_path, "w", encoding="utf-8") as f:
+            json.dump(
+                {
+                    "document_id": document_id,
+                    "document_json": document_json,
+                    "file_path": file_path,
+                    "processed_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+                    "status": "parsed",
+                },
+                f,
+                ensure_ascii=False,
+                indent=2,
+            )
+
+        # 保存部分结果（解析后的文档，用于快速展示）
         partial_result_path = get_document_storage_path(part_document_id, partial=True)
-        with open(partial_result_path, 'w', encoding='utf-8') as f:
-            json.dump({
-                "document_id": part_document_id,
-                "chunks": partial_chunks,
-                "total_chunks": len(chunks),
-                "displayed_chunks": len(partial_chunks),
-                "processed_at": time.strftime("%Y-%m-%d %H:%M:%S"),
-                "status": "completed"
-            }, f, ensure_ascii=False, indent=2)
-        
+        with open(partial_result_path, "w", encoding="utf-8") as f:
+            json.dump(
+                {
+                    "document_id": part_document_id,
+                    "document_json": document_json,
+                    "file_path": file_path,
+                    "processed_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+                    "status": "parsed",
+                },
+                f,
+                ensure_ascii=False,
+                indent=2,
+            )
+
         # 清理临时文件
         if temp_file.exists():
             temp_file.unlink()
-            
-        logger.info(f"Document processing completed: {document_id} ({len(chunks)} chunks)")
-        
+
+        logger.info(f"Document parsing completed: {document_id}")
+
     except Exception as e:
-        logger.error(f"Document processing failed for {document_id}: {e}")
+        logger.error(f"Document parsing failed for {document_id}: {e}")
         # 保存错误状态
-        error_result = {
-            "document_id": document_id,
-            "error": str(e),
-            "status": "failed"
-        }
-        
+        error_result = {"document_id": document_id, "error": str(e), "status": "failed"}
+
         full_result_path = get_document_storage_path(document_id, partial=False)
-        with open(full_result_path, 'w', encoding='utf-8') as f:
+        with open(full_result_path, "w", encoding="utf-8") as f:
             json.dump(error_result, f, indent=2)
-            
+
         partial_result_path = get_document_storage_path(part_document_id, partial=True)
-        with open(partial_result_path, 'w', encoding='utf-8') as f:
+        with open(partial_result_path, "w", encoding="utf-8") as f:
             json.dump(error_result, f, indent=2)
 
 
-def load_document_chunks(document_id: str, partial: bool = False) -> list:
-    """从存储中加载文档分块结果"""
+def load_document_chunks(
+    document_id: str, partial: bool = False, chunk_config: dict = None
+) -> list:
+    """从存储中加载文档分块结果，如果没有分块则执行分块操作"""
     storage_path = get_document_storage_path(document_id, partial=partial)
-    
+    chunks_storage_path = get_document_storage_path(
+        f"{document_id}_chunks", partial=partial
+    )
+
     if not storage_path.exists():
         raise FileNotFoundError(f"Document {document_id} not found")
-    
-    with open(storage_path, 'r', encoding='utf-8') as f:
-        result = json.load(f)
-    
-    if result.get("status") == "failed":
-        raise Exception(result.get("error", "Document processing failed"))
-    
-    return result.get("chunks", [])
+
+    # 首先检查是否已经分块
+    if chunks_storage_path.exists():
+        with open(chunks_storage_path, "r", encoding="utf-8") as f:
+            result = json.load(f)
+
+        if result.get("status") == "failed":
+            raise Exception(result.get("error", "Document chunking failed"))
+
+        return result.get("chunks", [])
+
+    # 如果还没有分块，执行分块操作
+    try:
+        with open(storage_path, "r", encoding="utf-8") as f:
+            parse_result = json.load(f)
+
+        if parse_result.get("status") == "failed":
+            raise Exception(parse_result.get("error", "Document parsing failed"))
+        if parse_result.get("status") != "parsed":
+            raise Exception("Document not yet parsed")
+
+        # 从存储中重建文档对象
+
+        document_json = parse_result["document_json"]
+
+        # 构建分块参数
+        chunk_kwargs = {}
+        if chunk_config:
+            if "chunk_token_count" in chunk_config:
+                chunk_kwargs["max_tokens"] = chunk_config["chunk_token_count"]
+        else:
+            chunk_kwargs["max_tokens"] = 1024  # 默认分块大小
+
+        # 执行分块操作
+        try:
+            chunks = chunk_document_task(document_json, **chunk_kwargs)
+
+            # 提取文本内容
+            text_chunks = []
+            for chunk in chunks:
+                if isinstance(chunk, dict) and "text" in chunk:
+                    text_chunks.append(chunk["text"])
+                elif hasattr(chunk, "text"):
+                    text_chunks.append(chunk.text)
+                else:
+                    text_chunks.append(str(chunk))
+
+            # 保存分块结果
+            result = {
+                "document_id": document_id,
+                "chunks": text_chunks,
+                "total_chunks": len(text_chunks),
+                "chunk_config": chunk_kwargs,
+                "processed_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+                "status": "completed",
+            }
+
+            # 保存完整分块结果
+            with open(chunks_storage_path, "w", encoding="utf-8") as f:
+                json.dump(result, f, ensure_ascii=False, indent=2)
+
+            # 保存部分分块结果（用于快速展示）
+            partial_chunks_storage_path = get_document_storage_path(
+                f"{document_id}_chunks", partial=True
+            )
+            partial_text_chunks = (
+                text_chunks[:10] if len(text_chunks) > 10 else text_chunks
+            )
+            partial_result = {
+                "document_id": document_id,
+                "chunks": partial_text_chunks,
+                "total_chunks": len(text_chunks),
+                "displayed_chunks": len(partial_text_chunks),
+                "chunk_config": chunk_kwargs,
+                "processed_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+                "status": "completed",
+            }
+
+            with open(partial_chunks_storage_path, "w", encoding="utf-8") as f:
+                json.dump(partial_result, f, ensure_ascii=False, indent=2)
+
+            logger.info(
+                f"Document chunking completed: {document_id} ({len(text_chunks)} chunks)"
+            )
+
+            if partial:
+                return partial_text_chunks
+            else:
+                return text_chunks
+
+        except Exception as e:
+            logger.error(f"Document chunking failed for {document_id}: {e}")
+            # 保存错误状态
+            error_result = {
+                "document_id": document_id,
+                "error": str(e),
+                "status": "failed",
+            }
+
+            with open(chunks_storage_path, "w", encoding="utf-8") as f:
+                json.dump(error_result, f, indent=2)
+
+            raise Exception(f"Document chunking failed: {str(e)}")
+
+    except Exception as e:
+        logger.error(f"Failed to load or chunk document {document_id}: {e}")
+        raise
+
 
 app = FastAPI(
     title="Knowledge Database API",
@@ -459,7 +555,9 @@ async def root():
 
 
 @app.post("/upload_documents", response_model=UploadDocumentResponse)
-async def upload_document(request: UploadDocumentRequest, background_tasks: BackgroundTasks):
+async def upload_document(
+    request: UploadDocumentRequest, background_tasks: BackgroundTasks
+):
     """
     上传文档并立即触发后台解析任务
     """
@@ -478,7 +576,7 @@ async def upload_document(request: UploadDocumentRequest, background_tasks: Back
         document_id,
         part_document_id,
         request.file_path,
-        {}  # 默认解析配置
+        {},  # 默认解析配置
     )
 
     return UploadDocumentResponse(
@@ -494,21 +592,31 @@ async def upload_document(request: UploadDocumentRequest, background_tasks: Back
 @app.post("/analyzing_documents", response_model=AnalyzingDocumentResponse)
 async def analyzing_document(request: AnalyzingDocumentRequest):
     """
-    从存储中读取已解析的文档分块结果
+    从存储中读取已解析的文档并执行分块操作
     """
     try:
         # 检查请求是否使用part_document_id进行快速展示
-        use_partial = "part" in request.document_name.lower() or "part" in str(request.document_id).lower()
+        use_partial = (
+            "part" in request.document_name.lower()
+            or "part" in str(request.document_id).lower()
+        )
         target_document_id = request.document_id
-        
-        # 直接从存储中加载已解析的结果，找不到立即抛出错误
-        chunks = load_document_chunks(target_document_id, partial=use_partial)
-        
+
+        # 构建分块配置
+        chunk_config = {}
+        if request.parser_config:
+            chunk_config.update(request.parser_config)
+
+        # 从存储中加载文档并执行分块操作
+        chunks = load_document_chunks(
+            target_document_id, partial=use_partial, chunk_config=chunk_config
+        )
+
         if not chunks:
             raise Exception("No chunks found for document")
-            
+
         return AnalyzingDocumentResponse(chunks=chunks, sign=True)
-        
+
     except FileNotFoundError as e:
         # 文档不存在或尚未处理完成
         raise HTTPException(
@@ -535,35 +643,35 @@ async def chunk_text(request: TextChunkingRequest):
     """
     # 生成临时文档ID
     document_id = str(uuid.uuid4()).replace("-", "")
-    
+
     # 创建临时文件保存文本
     with NamedTemporaryFile(mode="w+", suffix=".md", delete=False) as temp_file:
         temp_file.write(request.text)
         temp_file.flush()  # Ensure content is written to disk
         temp_file_path = temp_file.name
-    
+
     # 构建解析参数
     parse_kwargs = {}
     parser_config = {}
     if request.parser_flag == 1 and request.parser_config:
         parser_config = request.parser_config
-        if "chunk_token_count" in request.parser_config:
-            parse_kwargs["max_tokens"] = request.parser_config["chunk_token_count"]
         if "task_page_size" in request.parser_config:
             parse_kwargs["max_num_pages"] = request.parser_config["task_page_size"]
 
     try:
-        # 创建文档处理任务
+        # 创建文档处理任务 - 先解析文档
         await process_document_async(
             document_id,
             document_id,  # 文本分块不需要partial_id，使用相同的id
             temp_file_path,
-            parser_config
+            parser_config,
         )
-        
-        # 从存储中加载结果
-        chunks = load_document_chunks(document_id, partial=False)
-        
+
+        # 然后执行分块操作
+        chunks = load_document_chunks(
+            document_id, partial=False, chunk_config=parser_config
+        )
+
         return AnalyzingDocumentResponse(chunks=chunks, sign=True)
     except Exception as e:
         raise HTTPException(
