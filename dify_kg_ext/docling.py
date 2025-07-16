@@ -28,6 +28,6 @@ def parse_and_chunk(source, **kwargs):
     document = result.document
 
     # Chunk document
-    chunker = HybridChunker(tokenizer=tokenizer)
+    chunker = HybridChunker(tokenizer=tokenizer, max_tokens=1024)
     chunks = [chunks.export_json_dict() for chunks in chunker.chunk(document)]
     return chunks

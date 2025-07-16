@@ -42,7 +42,7 @@ def test_upload_and_analyze(base_url, file_path):
     }
     
     print("\n3. 获取完整解析结果...")
-    response = requests.post(f"{base_url}/analyzing_document", json=analyze_data)
+    response = requests.post(f"{base_url}/analyzing_documents", json=analyze_data)
     
     if response.status_code == 200:
         result = response.json()
@@ -64,7 +64,7 @@ def test_upload_and_analyze(base_url, file_path):
     }
     
     print("\n4. 获取部分解析结果（快速展示）...")
-    response = requests.post(f"{base_url}/analyzing_document", json=analyze_partial_data)
+    response = requests.post(f"{base_url}/analyzing_documents", json=analyze_partial_data)
     
     if response.status_code == 200:
         result = response.json()
