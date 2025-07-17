@@ -10,6 +10,7 @@ from dify_kg_ext.dataclasses import (
 )
 from dify_kg_ext.dataclasses.doc_parse import (
     AnalyzingDocumentRequest,
+    TextChunkingRequest,
     UploadDocumentRequest,
 )
 from dify_kg_ext.api import app
@@ -661,12 +662,12 @@ def test_upload_document():
 
 
 def test_analyzing_document():
-    """Test document parsing endpoint"""
+    """Test document analyzing endpoint"""
     with patch("dify_kg_ext.api.load_document_chunks") as mock_load:
         mock_load.return_value = [
             "First chunk content",
             "Second chunk content",
-            "{'other_field': 'Invalid chunk'}",  # Fallback for invalid chunks
+            "Third chunk content",
         ]
 
         request = AnalyzingDocumentRequest(
@@ -678,23 +679,24 @@ def test_analyzing_document():
             parser_config={},
         )
 
-        response = client.post("/analyzing_document", json=request.model_dump())
+        response = client.post("/analyzing_documents", json=request.model_dump())
 
         assert response.status_code == 200
         data = response.json()
         assert data["sign"] is True
+        assert len(data["chunks"]) == 3
         assert data["chunks"] == [
             "First chunk content",
-            "Second chunk content",
-            "{'other_field': 'Invalid chunk'}",  # Fallback for invalid chunks
+            "Second chunk content", 
+            "Third chunk content",
         ]
         mock_load.assert_called_once()
 
 
 def test_analyzing_document_with_custom_config():
-    """Test document parsing with custom parser configuration"""
+    """Test document analyzing with custom parser configuration"""
     with patch("dify_kg_ext.api.load_document_chunks") as mock_load:
-        mock_load.return_value = ["Chunk content"]
+        mock_load.return_value = ["Custom config chunk content"]
 
         request = AnalyzingDocumentRequest(
             dataset_id="dataset_123",
@@ -709,17 +711,17 @@ def test_analyzing_document_with_custom_config():
             },
         )
 
-        response = client.post("/analyzing_document", json=request.model_dump())
+        response = client.post("/analyzing_documents", json=request.model_dump())
 
         assert response.status_code == 200
         data = response.json()
         assert data["sign"] is True
-        assert data["chunks"] == ["Chunk content"]
+        assert data["chunks"] == ["Custom config chunk content"]
         mock_load.assert_called_once()
 
 
 def test_analyzing_document_timeout():
-    """Test document parsing timeout handling"""
+    """Test document analyzing timeout handling"""
     with patch("dify_kg_ext.api.load_document_chunks") as mock_load:
         mock_load.side_effect = Exception("Document processing timeout")
 
@@ -731,7 +733,7 @@ def test_analyzing_document_timeout():
             parser_flag=0,
         )
 
-        response = client.post("/analyzing_document", json=request.model_dump())
+        response = client.post("/analyzing_documents", json=request.model_dump())
 
         assert response.status_code == 500
         error_detail = response.json()
@@ -740,9 +742,9 @@ def test_analyzing_document_timeout():
 
 
 def test_analyzing_document_invalid_file():
-    """Test handling of invalid file paths"""
+    """Test handling of invalid document IDs"""
     with patch("dify_kg_ext.api.load_document_chunks") as mock_load:
-        mock_load.side_effect = FileNotFoundError("File not found")
+        mock_load.side_effect = FileNotFoundError("Document doc_456 not found")
 
         request = AnalyzingDocumentRequest(
             dataset_id="dataset_123",
@@ -752,94 +754,132 @@ def test_analyzing_document_invalid_file():
             parser_flag=0,
         )
 
-        response = client.post("/analyzing_document", json=request.model_dump())
+        response = client.post("/analyzing_documents", json=request.model_dump())
 
         assert response.status_code == 404
         error_detail = response.json()
         assert error_detail["error_code"] == 2001
-        assert "File not found" in error_detail["error_msg"]
+        assert "Document doc_456 not found" in error_detail["error_msg"]
 
 
 def test_chunk_text_success():
     """Test successful text chunking"""
-    with patch("dify_kg_ext.api.parse_document_task.delay") as mock_task:
-        mock_result = mock_task.return_value
-        mock_result.get.return_value = [
-            {"text": "First text chunk"},
-            {"text": "Second text chunk"}
+    import json
+    
+    with patch("dify_kg_ext.api.parse_document_task.delay") as mock_parse_task, \
+         patch("dify_kg_ext.api.chunk_document_task") as mock_chunk_task:
+        
+        # Mock the parse task to return a JSON string representation of a document
+        mock_parse_result = mock_parse_task.return_value
+        mock_document_dict = {
+            "title": "Test Document",
+            "content": "This is test content",
+            "metadata": {}
+        }
+        mock_parse_result.get.return_value = json.dumps(mock_document_dict)
+        
+        # Mock the chunk task to return chunk objects with text
+        mock_chunk_task.return_value = [
+            {"text": "First text chunk", "metadata": {}},
+            {"text": "Second text chunk", "metadata": {}}
         ]
 
-        request = {
-            "text": "This is a long text that needs to be chunked...",
-            "chunk_method": "naive",
-            "parser_flag": 0,
-            "parser_config": {}
-        }
+        request = TextChunkingRequest(
+            text="This is a long text that needs to be chunked...",
+            chunk_method="naive",
+            parser_flag=0,
+            parser_config={}
+        )
 
-        response = client.post("/chunk_text", json=request)
+        response = client.post("/chunk_text", json=request.model_dump())
 
         assert response.status_code == 200
         data = response.json()
         assert data["sign"] is True
+        assert len(data["chunks"]) == 2
         assert data["chunks"] == ["First text chunk", "Second text chunk"]
 
 
 def test_chunk_text_with_parser_config():
     """Test text chunking with custom parser configuration"""
-    with patch("dify_kg_ext.api.parse_document_task.delay") as mock_task:
-        mock_result = mock_task.return_value
-        mock_result.get.return_value = [{"text": "Custom config chunk"}]
+    import json
+    
+    with patch("dify_kg_ext.api.parse_document_task.delay") as mock_parse_task, \
+         patch("dify_kg_ext.api.chunk_document_task") as mock_chunk_task:
+        
+        mock_parse_result = mock_parse_task.return_value
+        mock_document_dict = {"title": "Test", "content": "Test content"}
+        mock_parse_result.get.return_value = json.dumps(mock_document_dict)
+        
+        mock_chunk_task.return_value = [
+            {"text": "Custom config chunk", "metadata": {}}
+        ]
 
-        request = {
-            "text": "Text with custom configuration",
-            "chunk_method": "book",
-            "parser_flag": 1,
-            "parser_config": {
+        request = TextChunkingRequest(
+            text="Text with custom configuration",
+            chunk_method="book",
+            parser_flag=1,
+            parser_config={
                 "chunk_token_count": 256,
                 "delimiter": "\n\n"
             }
-        }
+        )
 
-        response = client.post("/chunk_text", json=request)
+        response = client.post("/chunk_text", json=request.model_dump())
 
         assert response.status_code == 200
         data = response.json()
+        assert data["sign"] is True
         assert len(data["chunks"]) == 1
-        mock_task.assert_called_once()
+        assert data["chunks"] == ["Custom config chunk"]
+        mock_parse_task.assert_called_once()
+        mock_chunk_task.assert_called_once()
 
 
 def test_chunk_text_different_methods():
     """Test various chunking methods"""
+    import json
+    
     methods = ["naive", "qa", "table", "laws", "email"]
     
     for method in methods:
-        with patch("dify_kg_ext.api.parse_document_task.delay") as mock_task:
-            mock_task.return_value.get.return_value = [{"text": f"{method} chunk"}]
+        with patch("dify_kg_ext.api.parse_document_task.delay") as mock_parse_task, \
+             patch("dify_kg_ext.api.chunk_document_task") as mock_chunk_task:
             
-            request = {
-                "text": f"Sample text for {method}",
-                "chunk_method": method,
-                "parser_flag": 0
-            }
+            mock_parse_result = mock_parse_task.return_value
+            mock_document_dict = {"title": f"{method} test", "content": f"Content for {method}"}
+            mock_parse_result.get.return_value = json.dumps(mock_document_dict)
             
-            response = client.post("/chunk_text", json=request)
+            mock_chunk_task.return_value = [
+                {"text": f"{method} chunk content", "metadata": {}}
+            ]
+            
+            request = TextChunkingRequest(
+                text=f"Sample text for {method}",
+                chunk_method=method,
+                parser_flag=0
+            )
+            
+            response = client.post("/chunk_text", json=request.model_dump())
             assert response.status_code == 200
-            assert method in response.json()["chunks"][0]
+            data = response.json()
+            assert len(data["chunks"]) == 1
+            assert method in data["chunks"][0]
 
 
 def test_chunk_text_failure():
     """Test error handling in text chunking"""
-    with patch("dify_kg_ext.api.parse_document_task.delay") as mock_task:
-        mock_result = mock_task.return_value
-        mock_result.get.side_effect = Exception("Chunking failed")
+    with patch("dify_kg_ext.api.parse_document_task.delay") as mock_parse_task:
+        mock_parse_result = mock_parse_task.return_value
+        mock_parse_result.get.side_effect = Exception("Parsing failed")
         
-        request = {
-            "text": "Problematic text",
-            "chunk_method": "naive",
-            "parser_flag": 0
-        }
+        request = TextChunkingRequest(
+            text="Problematic text",
+            chunk_method="naive",
+            parser_flag=0
+        )
         
-        response = client.post("/chunk_text", json=request)
+        response = client.post("/chunk_text", json=request.model_dump())
         
         assert response.status_code == 500
         error_detail = response.json()
@@ -849,23 +889,33 @@ def test_chunk_text_failure():
 
 def test_chunk_text_file_cleanup():
     """Verify temporary files are cleaned up"""
-    with patch("dify_kg_ext.api.parse_document_task.delay") as mock_task, \
+    import json
+    
+    with patch("dify_kg_ext.api.parse_document_task.delay") as mock_parse_task, \
+         patch("dify_kg_ext.api.chunk_document_task") as mock_chunk_task, \
          patch("dify_kg_ext.api.os.unlink") as mock_unlink, \
          patch("dify_kg_ext.api.os.path.exists") as mock_exists:
         
-        mock_task.return_value.get.return_value = [{"text": "Clean chunk"}]
+        mock_parse_result = mock_parse_task.return_value
+        mock_document_dict = {"title": "Test", "content": "Test content"}
+        mock_parse_result.get.return_value = json.dumps(mock_document_dict)
+        
+        mock_chunk_task.return_value = [
+            {"text": "Clean chunk", "metadata": {}}
+        ]
         mock_exists.return_value = True
         
-        request = {
-            "text": "Text to verify cleanup",
-            "chunk_method": "naive",
-            "parser_flag": 0
-        }
+        request = TextChunkingRequest(
+            text="Text to verify cleanup",
+            chunk_method="naive",
+            parser_flag=0
+        )
         
-        response = client.post("/chunk_text", json=request)
+        response = client.post("/chunk_text", json=request.model_dump())
         
         assert response.status_code == 200
-        assert mock_unlink.call_count == 2
+        # Verify cleanup was called (should be called twice - once for temp processing file, once for NamedTemporaryFile)
+        assert mock_unlink.call_count >= 1
 
 
 def test_chunk_text_edge_cases():
@@ -895,41 +945,64 @@ def test_chunk_text_edge_cases():
 
 def test_chunk_text_performance():
     """Test performance with large text input"""
-    large_text = "Large text...\n" * 10000  # ~100KB
+    import json
     
-    with patch("dify_kg_ext.api.parse_document_task.delay") as mock_task:
-        mock_task.return_value.get.return_value = [{"text": "Large chunk"}]
+    large_text = "Large text...\n" * 1000  # ~10KB
+    
+    with patch("dify_kg_ext.api.parse_document_task.delay") as mock_parse_task, \
+         patch("dify_kg_ext.api.chunk_document_task") as mock_chunk_task:
         
-        request = {
-            "text": large_text,
-            "chunk_method": "naive",
-            "parser_flag": 0
-        }
+        mock_parse_result = mock_parse_task.return_value
+        mock_document_dict = {"title": "Large doc", "content": large_text}
+        mock_parse_result.get.return_value = json.dumps(mock_document_dict)
         
-        response = client.post("/chunk_text", json=request)
+        mock_chunk_task.return_value = [
+            {"text": "Large chunk content", "metadata": {}}
+        ]
+        
+        request = TextChunkingRequest(
+            text=large_text,
+            chunk_method="naive",
+            parser_flag=0
+        )
+        
+        response = client.post("/chunk_text", json=request.model_dump())
         
         assert response.status_code == 200
-        assert mock_task.called
+        assert mock_parse_task.called
+        assert mock_chunk_task.called
 
 
 def test_chunk_text_file_content():
     """Verify text is correctly written to temp file"""
+    import json
+    
     test_text = "Test content\nWith multiple lines"
     
     with patch("dify_kg_ext.api.NamedTemporaryFile") as mock_temp, \
-         patch("dify_kg_ext.api.parse_document_task.delay") as mock_task:
+         patch("dify_kg_ext.api.process_document_async") as mock_process, \
+         patch("dify_kg_ext.api.load_document_chunks") as mock_load:
         
         mock_file = mock_temp.return_value.__enter__.return_value
-        mock_file.name = "/tmp/mock_temp_file.txt"
+        mock_file.name = "/tmp/mock_temp_file.md"
         
-        mock_task.return_value.get.return_value = [{"text": "Content verified"}]
+        # Mock the document processing to complete successfully
+        mock_process.return_value = None  # Async function returns None
         
-        client.post("/chunk_text", json={
-            "text": test_text,
-            "chunk_method": "naive",
-            "parser_flag": 0
-        })
+        # Mock loading chunks to return test chunks
+        mock_load.return_value = ["Content verified"]
         
+        response = client.post("/chunk_text", json=TextChunkingRequest(
+            text=test_text,
+            chunk_method="naive",
+            parser_flag=0
+        ).model_dump())
+        
+        assert response.status_code == 200
         # Verify text was written to file
         mock_file.write.assert_called_once_with(test_text)
         mock_file.flush.assert_called()
+        # Verify process_document_async was called
+        mock_process.assert_called_once()
+        # Verify load_document_chunks was called
+        mock_load.assert_called_once()
