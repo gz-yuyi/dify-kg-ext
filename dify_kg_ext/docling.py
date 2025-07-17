@@ -4,11 +4,6 @@ from docling.chunking import HybridChunker
 from docling.document_converter import DocumentConverter
 from docling_core.transforms.chunker.tokenizer.openai import OpenAITokenizer
 
-tokenizer = OpenAITokenizer(
-    tokenizer=tiktoken.encoding_for_model("gpt-4o"),
-    max_tokens=128 * 1024,  # context window length required for OpenAI tokenizers
-)
-
 
 def parse_document(source, **kwargs):
     """
@@ -37,9 +32,13 @@ def chunk_document(document, **kwargs):
     Returns:
         List of document chunks with metadata
     """
-    chunker = HybridChunker(
-        tokenizer=tokenizer, max_tokens=kwargs.get("max_tokens", 1024)
+    tokenizer = OpenAITokenizer(
+        tokenizer=tiktoken.encoding_for_model("gpt-4o"),
+        max_tokens=kwargs.get(
+            "max_tokens", 1024
+        ),  # context window length required for OpenAI tokenizers
     )
+    chunker = HybridChunker(tokenizer=tokenizer)
     chunks = [chunks.export_json_dict() for chunks in chunker.chunk(document)]
     return chunks
 
@@ -56,12 +55,5 @@ def parse_and_chunk(source, **kwargs):
     Returns:
         List of document chunks with metadata
     """
-    # Convert document
-    converter = DocumentConverter()
-    result = converter.convert(source)
-    document = result.document
-
-    # Chunk document
-    chunker = HybridChunker(tokenizer=tokenizer, max_tokens=1024)
-    chunks = [chunks.export_json_dict() for chunks in chunker.chunk(document)]
-    return chunks
+    document = parse_document(source, **kwargs)
+    return chunk_document(document, **kwargs)
