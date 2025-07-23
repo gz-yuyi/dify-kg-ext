@@ -80,6 +80,7 @@ jobs:
         tags: |
           infiniflow/ragflow_deps:arm64
           infiniflow/ragflow_deps:latest
+          docker.io/infiniflow/ragflow_deps:latest
         cache-from: type=gha
         cache-to: type=gha,mode=max
         push: false
