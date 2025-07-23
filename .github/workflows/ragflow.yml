@@ -71,7 +71,19 @@ jobs:
       run: |
         sed -i 's/xgboost = "[^"]*"/xgboost = "1.6.0"/' pyproject.toml
 
+    - name: Check if dependencies image exists
+      id: check_deps_image
+      run: |
+        if docker manifest inspect ${{ env.REGISTRY }}/yuyi_tech/ragflow_deps:latest > /dev/null 2>&1; then
+          echo "exists=true" >> $GITHUB_OUTPUT
+          echo "Dependencies image already exists, skipping build"
+        else
+          echo "exists=false" >> $GITHUB_OUTPUT
+          echo "Dependencies image not found, will build"
+        fi
+
     - name: Build dependencies image
+      if: steps.check_deps_image.outputs.exists == 'false'
       uses: docker/build-push-action@v5
       with:
         context: .
