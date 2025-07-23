@@ -1,0 +1,96 @@
+name: Build RAGFlow ARM64 Docker Image
+
+on:
+  workflow_dispatch:
+    inputs:
+      ragflow_version:
+        description: 'RAGFlow version (branch/tag/commit)'
+        required: true
+        default: 'main'
+        type: string
+      image_tag:
+        description: 'Docker image tag suffix'
+        required: false
+        default: 'latest'
+        type: string
+
+env:
+  REGISTRY: crpi-lxfoqbwevmx9mc1q.cn-chengdu.personal.cr.aliyuncs.com
+  IMAGE_NAME: ragflow
+
+jobs:
+  build-arm64-slim:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+    - name: Checkout RAGFlow repository
+      uses: actions/checkout@v4
+      with:
+        repository: infiniflow/ragflow
+        ref: ${{ github.event.inputs.ragflow_version }}
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+      with:
+        platforms: linux/arm64
+
+    - name: Log in to Container Registry
+      uses: docker/login-action@v3
+      with:
+        registry: ${{ env.REGISTRY }}
+        username: ${{ secrets.ALIYUN_REGISTRY_USERNAME }}
+        password: ${{ secrets.ALIYUN_REGISTRY_PASSWORD }}
+
+    - name: Generate image tags
+      id: tags
+      run: |
+        if [ -n "${{ github.event.inputs.image_tag }}" ]; then
+          echo "tags=${{ env.REGISTRY }}/yuyi_tech/${{ env.IMAGE_NAME }}:${{ github.event.inputs.image_tag }}-arm64-slim" >> $GITHUB_OUTPUT
+        else
+          echo "tags=${{ env.REGISTRY }}/yuyi_tech/${{ env.IMAGE_NAME }}:${{ github.event.inputs.ragflow_version }}-arm64-slim" >> $GITHUB_OUTPUT
+        fi
+
+    - name: Set up Python for dependency download
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+
+    - name: Install uv
+      run: |
+        curl -LsSf https://astral.sh/uv/install.sh | sh
+        echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+
+    - name: Download dependencies
+      run: |
+        uv run download_deps.py
+
+    - name: Update xgboost for ARM64
+      run: |
+        sed -i 's/xgboost = "[^"]*"/xgboost = "1.6.0"/' pyproject.toml
+
+    - name: Build dependencies image
+      uses: docker/build-push-action@v5
+      with:
+        context: .
+        file: ./Dockerfile.deps
+        platforms: linux/arm64
+        tags: infiniflow/ragflow_deps:arm64
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+        push: false
+
+    - name: Build and push ARM64 slim image
+      uses: docker/build-push-action@v5
+      with:
+        context: .
+        file: ./Dockerfile
+        platforms: linux/arm64
+        build-args: |
+          LIGHTEN=1
+        tags: ${{ steps.tags.outputs.tags }}
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+        push: true
