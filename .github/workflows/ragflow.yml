@@ -78,12 +78,15 @@ jobs:
         file: ./Dockerfile.deps
         platforms: linux/arm64
         tags: |
-          infiniflow/ragflow_deps:arm64
-          infiniflow/ragflow_deps:latest
-          docker.io/infiniflow/ragflow_deps:latest
+          ${{ env.REGISTRY }}/yuyi_tech/ragflow_deps:latest
         cache-from: type=gha
         cache-to: type=gha,mode=max
-        push: false
+        push: true
+
+    - name: Update Dockerfile to use custom registry
+      run: |
+        REGISTRY_URL="${{ env.REGISTRY }}"
+        sed -i "s#infiniflow/ragflow_deps:latest#${REGISTRY_URL}/yuyi_tech/ragflow_deps:latest#g" Dockerfile
 
     - name: Build and push ARM64 slim image
       uses: docker/build-push-action@v5
