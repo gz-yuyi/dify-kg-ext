@@ -3,22 +3,25 @@ from unittest.mock import patch
 
 import aresponses
 import pytest
+
 from dify_kg_ext.adapters import RerankResult
 from dify_kg_ext.adapters.siliconflow import embedding, rerank
 
 
 @pytest.fixture
 def mock_siliconflow_env():
-    with patch.dict(os.environ, {"SILICONFLOW_TOKEN": "test-token"}):
-        with patch("dify_kg_ext.adapters.siliconflow.BASE_URL", "http://test-host"):
-            with patch(
-                "dify_kg_ext.adapters.siliconflow.HEADERS",
-                {
-                    "Authorization": "Bearer test-token",
-                    "Content-Type": "application/json",
-                },
-            ):
-                yield
+    with (
+        patch.dict(os.environ, {"SILICONFLOW_TOKEN": "test-token"}),
+        patch("dify_kg_ext.adapters.siliconflow.BASE_URL", "http://test-host"),
+        patch(
+            "dify_kg_ext.adapters.siliconflow.HEADERS",
+            {
+                "Authorization": "Bearer test-token",
+                "Content-Type": "application/json",
+            },
+        ),
+    ):
+        yield
 
 
 @pytest.mark.asyncio

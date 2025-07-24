@@ -18,9 +18,8 @@
 - uv
 - Docker & Docker Compose（推荐）
 - Elasticsearch（Docker自动提供）
-- Redis（Docker自动提供）
 - Python 3.12+（本地开发）
-- SiliconFlow API Token（用于文档解析）
+- RAGFlow API服务（用于文档解析和分块）
 
 ## 安装和运行
 
@@ -39,7 +38,7 @@ cp .env.example .env
 # 编辑.env文件（可选，使用默认配置可直接跳过）
 nano .env
 
-# 构建并启动所有服务（API + Worker + Redis + Elasticsearch）
+# 构建并启动所有服务（API + Elasticsearch）
 docker-compose up --build
 
 # 后台运行
@@ -59,9 +58,6 @@ docker build -t knowledge-db .
 
 # 运行API服务
 docker run -p 5001:5001 knowledge-db
-
-# 运行Worker
-docker run knowledge-db python -m main.py worker
 ```
 
 ### 本地开发方式
@@ -73,26 +69,9 @@ python main.py serve --host 0.0.0.0 --port 5001
 
 一个服务提供所有功能：
 - 知识管理API (CRUD操作)
+- 文档处理和分块（使用RAGFlow）
 - Dify外部知识库API (`/retrieval`端点)
 - 健康检查和API文档
-
-#### 启动文档处理Worker
-文档解析需要Celery worker异步处理。启动worker：
-```shell
-python main.py worker
-```
-
-自定义worker选项：
-```shell
-# 使用8个进程
-python main.py worker --concurrency 8
-
-# 调试日志级别
-python main.py worker --loglevel debug
-
-# 监听特定队列
-python main.py worker --queues document_parse
-```
 
 ## 可用命令
 
@@ -108,6 +87,31 @@ python main.py serve --reload
 
 # 自定义端口
 python main.py serve --port 8000
+```
+
+## RAGFlow配置
+
+在使用文档处理功能之前，需要配置RAGFlow服务：
+
+### 环境变量
+```bash
+# RAGFlow API配置
+export RAGFLOW_API_KEY="your-ragflow-api-key"
+export RAGFLOW_BASE_URL="http://your-ragflow-server:9380"
+```
+
+### Docker环境
+在docker-compose.yml或.env文件中配置：
+```env
+RAGFLOW_API_KEY=your-ragflow-api-key
+RAGFLOW_BASE_URL=http://your-ragflow-server:9380
+```
+
+### 本地开发
+如果RAGFlow运行在本地，默认配置为：
+```env
+RAGFLOW_API_KEY=ragflow-test-key-12345
+RAGFLOW_BASE_URL=http://localhost:9380
 ```
 
 ## API文档
@@ -129,8 +133,13 @@ python main.py serve --port 8000
 ## 快速集成Dify
 
 ### Docker方式（推荐）
-1. 启动完整服务：
+1. 配置RAGFlow服务和启动完整服务：
 ```bash
+# 复制并编辑环境变量
+cp .env.example .env
+# 配置RAGFLOW_API_KEY和RAGFLOW_BASE_URL
+
+# 启动服务
 docker-compose up -d --build
 ```
 
@@ -223,7 +232,6 @@ DATA_PATH=/opt/knowledge-db/data
 1. **端口冲突**：修改`.env`文件中的端口配置
 2. **内存不足**：调整`ES_JAVA_OPTS`参数，如`-Xms1g -Xmx1g`
 3. **权限问题**：确保当前用户有Docker权限
-4. **Redis连接失败**：检查Redis容器状态和网络配置
 
 #### 日志查看
 ```bash
@@ -232,25 +240,23 @@ docker-compose logs -f
 
 # 查看特定服务日志
 docker-compose logs -f api
-docker-compose logs -f worker
 docker-compose logs -f elasticsearch
-docker-compose logs -f redis
 ```
 
 #### 文档处理故障
-- **文档解析失败**：检查SiliconFlow API令牌是否有效
-- **处理超时**：增加worker并发数或检查文档大小
-- **分块失败**：调整`chunk_token_count`参数
+- **RAGFlow连接失败**：检查RAGFLOW_BASE_URL和RAGFLOW_API_KEY配置
+- **文档解析失败**：确保RAGFlow服务正常运行
+- **处理超时**：检查RAGFlow服务性能或调整超时配置
+- **分块失败**：调整`chunk_token_count`参数或检查chunk_method设置
 
 ## 文档处理功能
 
-系统提供完整的文档处理和文本分块功能：
+系统使用RAGFlow提供完整的文档处理和文本分块功能：
 
 ### 文档处理流程
-1. **上传文档**: 使用 `/upload_document` 端点上传文档
-2. **异步处理**: 使用 `/analyzing_document` 端点触发异步解析
-3. **获取结果**: 处理完成后获取分块结果
-4. **直接分块**: 使用 `/chunk_text` 直接处理文本
+1. **上传文档**: 使用 `/upload_documents` 端点上传文档，系统会自动调用RAGFlow进行处理
+2. **获取分块**: 使用 `/analyzing_documents` 端点获取文档分块结果
+3. **直接分块**: 使用 `/chunk_text` 直接处理文本内容
 
 ### 支持的文档格式
 - **PDF文档** (.pdf)
@@ -263,20 +269,25 @@ docker-compose logs -f redis
 
 #### 1. 文档上传
 ```bash
-curl -X POST "http://localhost:5001/upload_document" \
-  -F "file=@example.pdf" \
-  -F "dataset_id=my_dataset"
-```
-
-#### 2. 文档处理（异步）
-```bash
-curl -X POST "http://localhost:5001/analyzing_document" \
+curl -X POST "http://localhost:5001/upload_documents" \
   -H "Content-Type: application/json" \
   -d '{
+    "file_path": "http://example.com/document.pdf"
+  }'
+```
+
+#### 2. 获取文档分块
+```bash
+curl -X POST "http://localhost:5001/analyzing_documents" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "dataset_id": "dataset_123",
     "document_id": "doc_123456",
+    "document_name": "document.pdf",
+    "chunk_method": "naive",
+    "parser_flag": 1,
     "parser_config": {
-      "chunk_token_count": 500,
-      "page_size": 800
+      "chunk_token_count": 500
     }
   }'
 ```
@@ -287,7 +298,11 @@ curl -X POST "http://localhost:5001/chunk_text" \
   -H "Content-Type: application/json" \
   -d '{
     "text": "这里是长文本内容...",
-    "chunk_token_count": 400
+    "chunk_method": "naive",
+    "parser_flag": 1,
+    "parser_config": {
+      "chunk_token_count": 400
+    }
   }'
 ```
 

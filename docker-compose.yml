@@ -1,20 +1,7 @@
 version: '3.8'
 
 services:
-  # Redis for Celery message broker
-  redis:
-    image: redis:6.2.6
-    ports:
-      - "${REDIS_PORT:-6379}:6379"
-    volumes:
-      - redis_data:/data
-    command: redis-server --appendonly yes
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
+
 
   # Elasticsearch for search functionality
   elasticsearch:
@@ -42,13 +29,9 @@ services:
     ports:
       - "${API_PORT:-5001}:5001"
     depends_on:
-      redis:
-        condition: service_healthy
       elasticsearch:
         condition: service_healthy
     environment:
-      - REDIS_HOST=${REDIS_HOST:-redis}
-      - REDIS_PORT=${REDIS_PORT:-6379}
       - ELASTICSEARCH_HOST=${ELASTICSEARCH_HOST:-elasticsearch}
       - ELASTICSEARCH_PORT=${ELASTICSEARCH_PORT:-9200}
       - SMALL_MODEL_BACKEND=${SMALL_MODEL_BACKEND:-siliconflow}
@@ -56,7 +39,8 @@ services:
       - XINFERENCE_HOST=${XINFERENCE_HOST}
       - APP_NAME=${APP_NAME:-dify_kg_ext}
       - ES_HOST=http://${ELASTICSEARCH_HOST:-elasticsearch}:${ELASTICSEARCH_PORT:-9200}
-      - DOCLING_ARTIFACTS_PATH=${DOCLING_ARTIFACTS_PATH:-/tmp/.cache/docling/models}
+      - RAGFLOW_API_KEY=${RAGFLOW_API_KEY:-ragflow-test-key-12345}
+      - RAGFLOW_BASE_URL=${RAGFLOW_BASE_URL:-http://localhost:9380}
     restart: unless-stopped
     volumes:
       - ${DATA_PATH:-./data}:/app/data
@@ -67,30 +51,7 @@ services:
       retries: 3
 
   # Celery worker for document processing
-  worker:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    depends_on:
-      redis:
-        condition: service_healthy
-      elasticsearch:
-        condition: service_healthy
-    environment:
-      - REDIS_HOST=${REDIS_HOST:-redis}
-      - REDIS_PORT=${REDIS_PORT:-6379}
-      - ELASTICSEARCH_HOST=${ELASTICSEARCH_HOST:-elasticsearch}
-      - ELASTICSEARCH_PORT=${ELASTICSEARCH_PORT:-9200}
-      - SMALL_MODEL_BACKEND=${SMALL_MODEL_BACKEND:-siliconflow}
-      - SILICONFLOW_TOKEN=${SILICONFLOW_TOKEN}
-      - APP_NAME=${APP_NAME:-dify_kg_ext}
-      - ES_HOST=http://${ELASTICSEARCH_HOST:-elasticsearch}:${ELASTICSEARCH_PORT:-9200}
-      - DOCLING_ARTIFACTS_PATH=${DOCLING_ARTIFACTS_PATH:-/tmp/.cache/docling/models}
-    restart: unless-stopped
-    volumes:
-      - ${DATA_PATH:-./data}:/app/data
-    command: ["python", "-m", "main", "worker", "--concurrency", "${WORKER_CONCURRENCY:-2}", "--loglevel", "${WORKER_LOG_LEVEL:-info}"]
+
 
 volumes:
-  redis_data:
   elasticsearch_data:

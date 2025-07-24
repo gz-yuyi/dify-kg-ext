@@ -1,4 +1,4 @@
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, ClassVar, Literal
 
 from pydantic import BaseModel, Field
 
@@ -14,7 +14,7 @@ class UploadDocumentRequest(BaseModel):
     )
 
     class Config:
-        json_schema_extra = {
+        json_schema_extra: ClassVar[dict[str, Any]] = {
             "example": {"file_path": "http://39.105.167.2:9529/template.pdf"}
         }
 
@@ -48,7 +48,7 @@ class UploadDocumentResponse(BaseModel):
     )
 
     class Config:
-        json_schema_extra = {
+        json_schema_extra: ClassVar[dict[str, Any]] = {
             "example": {
                 "dataset_id": "f6c5dc32298211f08b470242ac130006",
                 "document_id": "f86a8ad8298211f0985d0242ac130006",
@@ -63,31 +63,31 @@ class UploadDocumentResponse(BaseModel):
 class ParserConfig(BaseModel):
     """Configuration for document parsing"""
 
-    chunk_token_count: Optional[int] = Field(
+    chunk_token_count: int | None = Field(
         default=128, description="Token count per chunk", example=128
     )
-    layout_recognize: Optional[bool] = Field(
+    layout_recognize: bool | None = Field(
         default=True, description="Enable layout recognition", example=True
     )
-    html4excel: Optional[bool] = Field(
+    html4excel: bool | None = Field(
         default=False,
         description="Convert Excel documents to HTML format",
         example=False,
     )
-    delimiter: Optional[str] = Field(
+    delimiter: str | None = Field(
         default="\n", description="Text delimiter for chunking", example="\n"
     )
-    task_page_size: Optional[int] = Field(
+    task_page_size: int | None = Field(
         default=12, description="Page size for PDF processing", example=12
     )
-    raptor: Optional[Dict[str, Any]] = Field(
+    raptor: dict[str, Any] | None = Field(
         default_factory=lambda: {"use_raptor": False},
         description="RAPTOR configuration settings",
         example={"use_raptor": False},
     )
 
     class Config:
-        json_schema_extra = {
+        json_schema_extra: ClassVar[dict[str, Any]] = {
             "example": {
                 "chunk_token_count": 128,
                 "layout_recognize": True,
@@ -134,14 +134,14 @@ class AnalyzingDocumentRequest(BaseModel):
         description="Flag indicating if parser config should be used (1=true, 0=false)",
         example=0,
     )
-    parser_config: Dict[str, Any] = Field(
+    parser_config: dict[str, Any] = Field(
         default_factory=dict,
         description="Configuration settings for the parser",
         example={"chunk_token_count": 10, "layout_recognize": True, "delimiter": "\n"},
     )
 
     class Config:
-        json_schema_extra = {
+        json_schema_extra: ClassVar[dict[str, Any]] = {
             "examples": [
                 {
                     "dataset_id": "f6c5dc32298211f08b470242ac130006",
@@ -170,7 +170,7 @@ class AnalyzingDocumentRequest(BaseModel):
 class AnalyzingDocumentResponse(BaseModel):
     """Response model with document chunks"""
 
-    chunks: List[str] = Field(
+    chunks: list[str] = Field(
         ...,
         description="List of text chunks extracted from the document",
         example=[
@@ -183,7 +183,7 @@ class AnalyzingDocumentResponse(BaseModel):
     )
 
     class Config:
-        json_schema_extra = {
+        json_schema_extra: ClassVar[dict[str, Any]] = {
             "example": {
                 "chunks": [
                     "中华人民共和国网络安全法\n（2016 年11 月7日第十二届全国人民代表大会常务委员会第二十四次会议通过）目录",
@@ -197,7 +197,13 @@ class AnalyzingDocumentResponse(BaseModel):
 
 class TextChunkingRequest(BaseModel):
     """Request model for direct text chunking"""
-    text: str = Field(..., min_length=1, description="Text to be chunked", example="This is a long text that needs to be split...")
+
+    text: str = Field(
+        ...,
+        min_length=1,
+        description="Text to be chunked",
+        example="This is a long text that needs to be split...",
+    )
     chunk_method: Literal[
         "naive",
         "manual",
@@ -215,14 +221,14 @@ class TextChunkingRequest(BaseModel):
         description="Flag indicating if parser config should be used (1=true, 0=false)",
         example=0,
     )
-    parser_config: Dict[str, Any] = Field(
+    parser_config: dict[str, Any] = Field(
         default_factory=dict,
         description="Configuration settings for the parser",
         example={"chunk_token_count": 10, "delimiter": "\n"},
     )
 
     class Config:
-        json_schema_extra = {
+        json_schema_extra: ClassVar[dict[str, Any]] = {
             "example": {
                 "text": "This is a sample text to be chunked...",
                 "chunk_method": "naive",

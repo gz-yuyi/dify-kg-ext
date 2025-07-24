@@ -1,17 +1,17 @@
-from typing import Any, Dict, List, Optional
+from typing import Any, ClassVar
 
 from pydantic import BaseModel, Field, RootModel, field_validator
 
 
 class RetrievalMetadataCondition(BaseModel):
-    name: List[str] = Field(..., description="要过滤的元数据名称列表")
+    name: list[str] = Field(..., description="要过滤的元数据名称列表")
     comparison_operator: str = Field(..., description="比较运算符")
-    value: Optional[str] = Field(None, description="比较值")
+    value: str | None = Field(None, description="比较值")
 
 
 class MetadataConditions(BaseModel):
     logical_operator: str = Field("and", description="逻辑运算符：and或or")
-    conditions: List[RetrievalMetadataCondition] = Field(..., description="条件列表")
+    conditions: list[RetrievalMetadataCondition] = Field(..., description="条件列表")
 
 
 class RetrievalSetting(BaseModel):
@@ -25,7 +25,7 @@ class RetrievalRequest(BaseModel):
     knowledge_id: str = Field(..., description="知识库唯一ID")
     query: str = Field(..., min_length=1, description="用户查询")
     retrieval_setting: RetrievalSetting = Field(..., description="检索参数")
-    metadata_condition: Optional[MetadataConditions] = Field(
+    metadata_condition: MetadataConditions | None = Field(
         None, description="元数据过滤条件"
     )
 
@@ -37,7 +37,7 @@ class RetrievalRequest(BaseModel):
         return v
 
     class Config:
-        json_schema_extra = {
+        json_schema_extra: ClassVar[dict[str, Any]] = {
             "example": {
                 "knowledge_id": "your-knowledge-id",
                 "query": "社保问题",
@@ -49,17 +49,17 @@ class RetrievalRequest(BaseModel):
 class RecordMetadata(RootModel):
     """文档元数据"""
 
-    root: Dict[str, Any] = Field(default_factory=dict)
+    root: dict[str, Any] = Field(default_factory=dict)
 
 
 class Record(BaseModel):
     content: str = Field(..., description="知识库中数据源的文本块")
     score: float = Field(..., ge=0, le=1, description="结果与查询的相关性分数")
     title: str = Field(..., description="文档标题")
-    metadata: Optional[Dict[str, Any]] = Field(None, description="文档元数据")
+    metadata: dict[str, Any] | None = Field(None, description="文档元数据")
 
     class Config:
-        json_schema_extra = {
+        json_schema_extra: ClassVar[dict[str, Any]] = {
             "example": {
                 "metadata": {
                     "path": "s3://dify/knowledge.txt",
@@ -73,10 +73,10 @@ class Record(BaseModel):
 
 
 class RetrievalResponse(BaseModel):
-    records: List[Record] = Field(..., description="知识库查询记录列表")
+    records: list[Record] = Field(..., description="知识库查询记录列表")
 
     class Config:
-        json_schema_extra = {
+        json_schema_extra: ClassVar[dict[str, Any]] = {
             "example": {
                 "records": [
                     {
@@ -98,7 +98,7 @@ class ErrorResponse(BaseModel):
     error_msg: str = Field(..., description="API异常描述")
 
     class Config:
-        json_schema_extra = {
+        json_schema_extra: ClassVar[dict[str, Any]] = {
             "example": {
                 "error_code": 1001,
                 "error_msg": "Invalid Authorization header format. Expected 'Bearer <api-key>' format.",

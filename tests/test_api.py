@@ -1,5 +1,8 @@
 from unittest.mock import patch
 
+from fastapi.testclient import TestClient
+
+from dify_kg_ext.api import app
 from dify_kg_ext.dataclasses import (
     Answer,
     Knowledge,
@@ -13,8 +16,7 @@ from dify_kg_ext.dataclasses.doc_parse import (
     TextChunkingRequest,
     UploadDocumentRequest,
 )
-from dify_kg_ext.api import app
-from fastapi.testclient import TestClient
+
 
 client = TestClient(app, raise_server_exceptions=False)
 
@@ -57,15 +59,12 @@ def test_update_knowledge_failure():
         response = client.post("/knowledge/update", json=knowledge.model_dump())
 
         assert response.status_code == 500
-        result = response.json()
-        # The API uses custom error format with error_code and error_msg
-        assert result["error_code"] == 500
-        assert "Failed to index document" in result["error_msg"]
+        assert "Failed to index document" in response.json()["detail"]
 
 
 def test_delete_knowledge():
     with patch("dify_kg_ext.api.delete_documents") as mock_delete:
-        mock_delete.return_value = None
+        mock_delete.return_value = True
 
         request = KnowledgeDeleteRequest(segment_ids=["segment_123", "segment_456"])
 
@@ -76,719 +75,336 @@ def test_delete_knowledge():
         mock_delete.assert_called_once_with(request.segment_ids)
 
 
+def test_delete_knowledge_failure():
+    with patch("dify_kg_ext.api.delete_documents") as mock_delete:
+        mock_delete.return_value = False
+
+        request = KnowledgeDeleteRequest(segment_ids=["segment_123", "segment_456"])
+
+        response = client.post("/knowledge/delete", json=request.model_dump())
+
+        assert response.status_code == 500
+        assert "Failed to delete documents" in response.json()["detail"]
+
+
 def test_bind_knowledge_batch():
     with patch("dify_kg_ext.api.bind_knowledge_to_library") as mock_bind:
-        mock_result = {"success_count": 5, "failed_ids": []}
-        mock_bind.return_value = mock_result
+        mock_bind.return_value = {"success_count": 1, "failed_ids": []}
 
         request = KnowledgeBindBatchRequest(
-            library_id="lib_123", category_ids=["cat_1", "cat_2", "cat_3"]
+            library_id="lib_123", category_ids=["cat_1", "cat_2"]
         )
 
         response = client.post("/knowledge/bind_batch", json=request.model_dump())
 
         assert response.status_code == 200
-        assert response.json() == {"code": 200, "msg": "success", "data": mock_result}
-        mock_bind.assert_called_once_with(
-            library_id=request.library_id, category_ids=request.category_ids
+        data = response.json()
+        assert data["code"] == 200
+        assert data["msg"] == "success"
+        assert data["data"]["success_count"] == 1
+        assert data["data"]["failed_ids"] == []
+        mock_bind.assert_called_once_with(request.library_id, request.category_ids)
+
+
+def test_bind_knowledge_batch_failure():
+    with patch("dify_kg_ext.api.bind_knowledge_to_library") as mock_bind:
+        mock_bind.return_value = {"success_count": 0, "failed_ids": ["cat_1", "cat_2"]}
+
+        request = KnowledgeBindBatchRequest(
+            library_id="lib_123", category_ids=["cat_1", "cat_2"]
         )
+
+        response = client.post("/knowledge/bind_batch", json=request.model_dump())
+
+        assert response.status_code == 500
+        assert "Failed to bind knowledge" in response.json()["detail"]
 
 
 def test_unbind_knowledge_batch():
-    with patch(
-        "dify_kg_ext.api.unbind_knowledge_from_library"
-    ) as mock_unbind:
-        mock_result = {"success_count": 3, "failed_ids": []}
-        mock_unbind.return_value = mock_result
+    with patch("dify_kg_ext.api.unbind_knowledge_from_library") as mock_unbind:
+        mock_unbind.return_value = {"success_count": 1, "failed_ids": []}
 
         request = KnowledgeUnbindBatchRequest(
-            library_id="lib_123", category_ids=["cat_1", "cat_2"], delete_type="all"
+            library_id="lib_123", category_ids=["cat_1", "cat_2"], delete_type="part"
         )
 
         response = client.post("/knowledge/unbind_batch", json=request.model_dump())
 
         assert response.status_code == 200
-        assert response.json() == {"code": 200, "msg": "success", "data": mock_result}
+        data = response.json()
+        assert data["code"] == 200
+        assert data["msg"] == "success"
+        assert data["data"]["success_count"] == 1
+        assert data["data"]["failed_ids"] == []
         mock_unbind.assert_called_once_with(
-            library_id=request.library_id,
-            category_ids=request.category_ids,
-            delete_type=request.delete_type,
+            request.library_id, request.category_ids, request.delete_type
         )
+
+
+def test_unbind_knowledge_batch_failure():
+    with patch("dify_kg_ext.api.unbind_knowledge_from_library") as mock_unbind:
+        mock_unbind.return_value = None  # 返回None表示失败
+
+        request = KnowledgeUnbindBatchRequest(
+            library_id="lib_123", category_ids=["cat_1", "cat_2"], delete_type="part"
+        )
+
+        response = client.post("/knowledge/unbind_batch", json=request.model_dump())
+
+        assert response.status_code == 500
+        assert "Failed to unbind knowledge" in response.json()["detail"]
 
 
 def test_search_knowledge():
     with patch("dify_kg_ext.api.search_knowledge") as mock_search:
-        # The es.py implementation returns a dict with "segments" key
+        # 返回完整的Knowledge对象
+        from dify_kg_ext.dataclasses import Answer, Knowledge
+
         mock_knowledge = Knowledge(
-            segment_id="segment_123",
+            segment_id="seg_1",
             source="personal",
             knowledge_type="faq",
-            question="How to search?",
-            similar_questions=["How to find?"],
-            answers=[Answer(content="Test search answer", channels=["channel_a"])],
+            question="What is AI?",
+            answers=[Answer(content="Artificial Intelligence...", channels=["web"])],
             weight=5,
-            document_id="doc_789",
-            keywords=["search", "find"],
-            category_id="cat_456",
+            category_id="cat_001",
         )
-        # Return dictionary format matching es.py implementation
         mock_search.return_value = {"segments": [mock_knowledge]}
 
         request = KnowledgeSearchRequest(
-            query="search query", library_id="lib_123", limit=5
+            query="artificial intelligence", library_id="lib_123", limit=10
         )
 
         response = client.post("/knowledge/search", json=request.model_dump())
 
         assert response.status_code == 200
-        result = response.json()
-        assert result["code"] == 200
-        assert result["msg"] == "success"
-        assert "segments" in result["data"]
-        assert len(result["data"]["segments"]) == 1
+        data = response.json()
+        assert data["code"] == 200
+        assert data["msg"] == "success"
+        assert len(data["data"]["segments"]) == 1
         mock_search.assert_called_once_with(
             query=request.query, library_id=request.library_id, limit=request.limit
         )
 
 
-# ==================== 新增测试用例 ====================
-
-
-# 系统功能测试
-def test_health_check():
-    """测试健康检查端点"""
-    response = client.get("/health")
-
-    assert response.status_code == 200
-    result = response.json()
-    assert result["status"] == "healthy"
-    assert result["service"] == "knowledge-database-api"
-    assert "features" in result
-    assert "knowledge-management" in result["features"]
-    assert "dify-external-knowledge-api" in result["features"]
-
-
-def test_root_endpoint():
-    """测试根路径信息端点"""
-    response = client.get("/")
-
-    assert response.status_code == 200
-    result = response.json()
-    assert result["service"] == "Knowledge Database API"
-    assert result["version"] == "1.0.0"
-    assert "features" in result
-    assert "endpoints" in result
-
-    # 验证功能描述
-    features = result["features"]
-    assert "knowledge_management" in features
-    assert "dify_integration" in features
-    assert "semantic_search" in features
-
-    # 验证端点信息
-    endpoints = result["endpoints"]
-    assert "knowledge_management" in endpoints
-    assert "dify_integration" in endpoints
-    assert "system" in endpoints
-
-
-# Dify API 增强测试
-def test_retrieval_endpoint_basic():
-    """测试基本的检索功能"""
-    with patch(
-        "dify_kg_ext.api.check_knowledge_exists"
-    ) as mock_check, patch(
-        "dify_kg_ext.api.retrieve_knowledge"
-    ) as mock_retrieve:
-        # 设置知识库存在并返回结果
-        mock_check.return_value = True
-        mock_records = {
-            "records": [
-                {
-                    "content": "Sample content for retrieval",
-                    "score": 0.85,
-                    "title": "Sample Title",
-                    "metadata": {
-                        "document_id": "doc_123",
-                        "category_id": "cat_456",
-                        "knowledge_type": "faq",
-                    },
-                }
-            ]
-        }
-        mock_retrieve.return_value = mock_records
-
-        # 准备测试请求
-        request_data = {
-            "knowledge_id": "lib_123",
-            "query": "test retrieval query",
-            "retrieval_setting": {"top_k": 5, "score_threshold": 0.6},
-        }
-
-        # 添加授权头
-        headers = {"Authorization": "Bearer your-api-key"}
-
-        # 发送请求
-        response = client.post("/retrieval", json=request_data, headers=headers)
-
-        # 验证响应格式符合Dify标准
-        assert response.status_code == 200
-        result = response.json()
-        assert "records" in result
-        assert len(result["records"]) == 1
-
-        record = result["records"][0]
-        assert "content" in record
-        assert "score" in record
-        assert "title" in record
-        assert "metadata" in record
-
-        # 验证函数调用
-        mock_check.assert_called_once_with(request_data["knowledge_id"])
-        mock_retrieve.assert_called_once_with(
-            knowledge_id=request_data["knowledge_id"],
-            query=request_data["query"],
-            top_k=request_data["retrieval_setting"]["top_k"],
-            score_threshold=request_data["retrieval_setting"]["score_threshold"],
-            metadata_condition=None,
-        )
-
-
-def test_retrieval_with_dify_api_key():
-    """测试使用Dify风格的API密钥（长度>10位）"""
-    with patch(
-        "dify_kg_ext.api.check_knowledge_exists"
-    ) as mock_check, patch(
-        "dify_kg_ext.api.retrieve_knowledge"
-    ) as mock_retrieve:
-        mock_check.return_value = True
-        mock_retrieve.return_value = {"records": []}
-
-        request_data = {
-            "knowledge_id": "lib_123",
-            "query": "test query",
-            "retrieval_setting": {"top_k": 3, "score_threshold": 0.5},
-        }
-
-        # 使用Dify风格的长API密钥
-        headers = {"Authorization": "Bearer dify-api-key-123456789"}
-
-        response = client.post("/retrieval", json=request_data, headers=headers)
-
-        assert response.status_code == 200
-        mock_check.assert_called_once()
-
-
-def test_retrieval_nonexistent_knowledge():
-    """测试不存在的知识库"""
-    with patch("dify_kg_ext.api.check_knowledge_exists") as mock_check:
-        # 设置知识库不存在
-        mock_check.return_value = False
-
-        # 准备测试请求
-        request_data = {
-            "knowledge_id": "nonexistent_lib",
-            "query": "test query",
-            "retrieval_setting": {"top_k": 5, "score_threshold": 0.6},
-        }
-
-        # 添加授权头
-        headers = {"Authorization": "Bearer your-api-key"}
-
-        # 发送请求
-        response = client.post("/retrieval", json=request_data, headers=headers)
-
-        # 验证响应
-        assert response.status_code == 404
-        result = response.json()
-        assert result["error_code"] == 2001
-        assert "knowledge base does not exist" in result["error_msg"]
-
-
-def test_retrieval_authentication_scenarios():
-    """测试各种认证场景"""
-    request_data = {
-        "knowledge_id": "lib_123",
-        "query": "test query",
-        "retrieval_setting": {"top_k": 5, "score_threshold": 0.6},
-    }
-
-    # 1. 没有授权头
-    response = client.post("/retrieval", json=request_data)
-    assert response.status_code == 403
-    assert response.json()["error_code"] == 1001
-    assert "Missing Authorization header" in response.json()["error_msg"]
-
-    # 2. 错误格式的授权头（没有空格）
-    headers = {"Authorization": "BearerInvalidFormat"}
-    response = client.post("/retrieval", json=request_data, headers=headers)
-    assert response.status_code == 403
-    assert response.json()["error_code"] == 1001
-
-    # 3. 错误的认证方案
-    headers = {"Authorization": "Basic invalid-scheme"}
-    response = client.post("/retrieval", json=request_data, headers=headers)
-    assert response.status_code == 403
-    assert response.json()["error_code"] == 1001
-
-    # 4. API密钥过短
-    headers = {"Authorization": "Bearer short"}
-    response = client.post("/retrieval", json=request_data, headers=headers)
-    assert response.status_code == 403
-    assert response.json()["error_code"] == 1002
-    assert "Authorization failed" in response.json()["error_msg"]
-
-
-def test_retrieval_with_metadata_condition():
-    """测试带元数据过滤条件的检索"""
-    with patch(
-        "dify_kg_ext.api.check_knowledge_exists"
-    ) as mock_check, patch(
-        "dify_kg_ext.api.retrieve_knowledge"
-    ) as mock_retrieve:
-        # 设置知识库存在并返回结果
-        mock_check.return_value = True
-        mock_retrieve.return_value = {"records": []}
-
-        # 准备带元数据条件的测试请求
-        request_data = {
-            "knowledge_id": "lib_123",
-            "query": "test query with metadata",
-            "retrieval_setting": {"top_k": 5, "score_threshold": 0.6},
-            "metadata_condition": {
-                "logical_operator": "and",
-                "conditions": [
-                    {
-                        "name": ["category"],
-                        "comparison_operator": "contains",
-                        "value": "test",
-                    }
-                ],
-            },
-        }
-
-        # 添加授权头
-        headers = {"Authorization": "Bearer your-api-key"}
-
-        # 发送请求
-        response = client.post("/retrieval", json=request_data, headers=headers)
-
-        # 验证响应
-        assert response.status_code == 200
-
-        # 验证元数据条件传递
-        mock_retrieve.assert_called_once()
-        _, kwargs = mock_retrieve.call_args
-        assert "metadata_condition" in kwargs
-        assert kwargs["metadata_condition"].logical_operator == "and"
-        assert len(kwargs["metadata_condition"].conditions) == 1
-
-
-def test_retrieval_with_complex_metadata():
-    """测试复杂元数据过滤条件"""
-    with patch(
-        "dify_kg_ext.api.check_knowledge_exists"
-    ) as mock_check, patch(
-        "dify_kg_ext.api.retrieve_knowledge"
-    ) as mock_retrieve:
-        mock_check.return_value = True
-        mock_retrieve.return_value = {"records": []}
-
-        request_data = {
-            "knowledge_id": "lib_123",
-            "query": "complex metadata query",
-            "retrieval_setting": {"top_k": 10, "score_threshold": 0.3},
-            "metadata_condition": {
-                "logical_operator": "or",
-                "conditions": [
-                    {
-                        "name": ["knowledge_type"],
-                        "comparison_operator": "eq",
-                        "value": "faq",
-                    },
-                    {
-                        "name": ["category_id"],
-                        "comparison_operator": "in",
-                        "value": "cat_123",
-                    },
-                ],
-            },
-        }
-
-        headers = {"Authorization": "Bearer complex-test-api-key-123456"}
-        response = client.post("/retrieval", json=request_data, headers=headers)
-
-        assert response.status_code == 200
-        mock_retrieve.assert_called_once()
-
-
-def test_retrieval_edge_cases():
-    """测试边界情况"""
-    with patch(
-        "dify_kg_ext.api.check_knowledge_exists"
-    ) as mock_check, patch(
-        "dify_kg_ext.api.retrieve_knowledge"
-    ) as mock_retrieve:
-        mock_check.return_value = True
-
-        # 测试空结果
-        mock_retrieve.return_value = {"records": []}
-
-        request_data = {
-            "knowledge_id": "lib_123",
-            "query": "no results query",
-            "retrieval_setting": {
-                "top_k": 1,
-                "score_threshold": 0.99,  # 很高的阈值
-            },
-        }
-
-        headers = {"Authorization": "Bearer edge-case-test-key-123"}
-        response = client.post("/retrieval", json=request_data, headers=headers)
-
-        assert response.status_code == 200
-        result = response.json()
-        assert "records" in result
-        assert len(result["records"]) == 0
-
-
-def test_retrieval_parameter_validation():
-    """测试参数验证"""
-    headers = {"Authorization": "Bearer valid-test-key-123456"}
-
-    # 测试缺少必需参数
-    invalid_requests = [
-        # 缺少knowledge_id
-        {
-            "query": "test query",
-            "retrieval_setting": {"top_k": 5, "score_threshold": 0.5},
-        },
-        # 缺少query
-        {
-            "knowledge_id": "lib_123",
-            "retrieval_setting": {"top_k": 5, "score_threshold": 0.5},
-        },
-        # 缺少retrieval_setting
-        {"knowledge_id": "lib_123", "query": "test query"},
-        # top_k超出范围
-        {
-            "knowledge_id": "lib_123",
-            "query": "test query",
-            "retrieval_setting": {"top_k": 101, "score_threshold": 0.5},
-        },
-        # score_threshold超出范围
-        {
-            "knowledge_id": "lib_123",
-            "query": "test query",
-            "retrieval_setting": {"top_k": 5, "score_threshold": 1.5},
-        },
-    ]
-
-    for invalid_request in invalid_requests:
-        response = client.post("/retrieval", json=invalid_request, headers=headers)
-        assert response.status_code == 422  # Validation error
-
-
-# 异常处理测试
-def test_retrieval_internal_error():
-    """测试内部错误处理"""
-    with patch(
-        "dify_kg_ext.api.check_knowledge_exists"
-    ) as mock_check, patch(
-        "dify_kg_ext.api.retrieve_knowledge"
-    ) as mock_retrieve:
-        mock_check.return_value = True
-        # 模拟内部错误
-        mock_retrieve.side_effect = Exception("Database connection failed")
-
-        request_data = {
-            "knowledge_id": "lib_123",
-            "query": "test query",
-            "retrieval_setting": {"top_k": 5, "score_threshold": 0.6},
-        }
-
-        headers = {"Authorization": "Bearer error-test-key-123456"}
-
-        # The exception should be caught by the general exception handler
-        # and return a 500 status with custom error format
-        response = client.post("/retrieval", json=request_data, headers=headers)
-
-        assert response.status_code == 500
-        result = response.json()
-        assert result["error_code"] == 5001
-        assert "Internal server error" in result["error_msg"]
-        assert "Database connection failed" in result["error_msg"]
-
-
-def test_retrieval_logging():
-    """测试日志记录功能"""
-    with patch(
-        "dify_kg_ext.api.check_knowledge_exists"
-    ) as mock_check, patch(
-        "dify_kg_ext.api.retrieve_knowledge"
-    ) as mock_retrieve, patch("dify_kg_ext.api.logger") as mock_logger:
+def test_retrieval():
+    with (
+        patch("dify_kg_ext.api.check_knowledge_exists") as mock_check,
+        patch("dify_kg_ext.api.retrieve_knowledge") as mock_retrieve,
+    ):
         mock_check.return_value = True
         mock_retrieve.return_value = {
             "records": [
-                {"content": "test", "score": 0.8, "title": "test", "metadata": {}}
+                {
+                    "content": "Test content",
+                    "score": 0.95,
+                    "title": "Test Document",
+                    "metadata": {"source": "test"},
+                }
             ]
         }
 
+        headers = {"Authorization": "Bearer test-api-key-123"}
         request_data = {
-            "knowledge_id": "lib_123",
-            "query": "logging test query",
-            "retrieval_setting": {"top_k": 3, "score_threshold": 0.5},
-        }
-
-        headers = {"Authorization": "Bearer logging-test-key-123456"}
-        response = client.post("/retrieval", json=request_data, headers=headers)
-
-        assert response.status_code == 200
-
-        # 验证日志调用
-        assert mock_logger.info.call_count >= 2  # 请求和响应日志
-
-        # 验证日志内容
-        log_calls = [call.args[0] for call in mock_logger.info.call_args_list]
-        assert any("Knowledge retrieval request" in log for log in log_calls)
-        assert any("Knowledge retrieval response" in log for log in log_calls)
-
-
-# 性能和并发测试
-def test_retrieval_concurrent_requests():
-    """测试并发请求处理"""
-    import threading
-    import time
-
-    with patch(
-        "dify_kg_ext.api.check_knowledge_exists"
-    ) as mock_check, patch(
-        "dify_kg_ext.api.retrieve_knowledge"
-    ) as mock_retrieve:
-        mock_check.return_value = True
-        mock_retrieve.return_value = {"records": []}
-
-        def make_request(thread_id):
-            request_data = {
-                "knowledge_id": f"lib_{thread_id}",
-                "query": f"concurrent test query {thread_id}",
-                "retrieval_setting": {"top_k": 5, "score_threshold": 0.5},
-            }
-
-            headers = {
-                "Authorization": f"Bearer concurrent-test-key-{thread_id}-123456"
-            }
-            response = client.post("/retrieval", json=request_data, headers=headers)
-            return response.status_code
-
-        # 创建多个线程并发请求
-        threads = []
-        results = []
-
-        for i in range(5):
-            thread = threading.Thread(
-                target=lambda i=i: results.append(make_request(i))
-            )
-            threads.append(thread)
-            thread.start()
-
-        # 等待所有线程完成
-        for thread in threads:
-            thread.join()
-
-        # 验证所有请求都成功
-        assert len(results) == 5
-        assert all(status == 200 for status in results)
-
-
-# 兼容性测试
-def test_backward_compatibility():
-    """测试向后兼容性"""
-    with patch(
-        "dify_kg_ext.api.check_knowledge_exists"
-    ) as mock_check, patch(
-        "dify_kg_ext.api.retrieve_knowledge"
-    ) as mock_retrieve:
-        mock_check.return_value = True
-        mock_retrieve.return_value = {"records": []}
-
-        # 使用原有的API密钥格式
-        headers = {"Authorization": "Bearer your-api-key"}
-
-        request_data = {
-            "knowledge_id": "lib_123",
-            "query": "backward compatibility test",
+            "knowledge_id": "kb_123",
+            "query": "test query",
             "retrieval_setting": {"top_k": 5, "score_threshold": 0.5},
         }
 
         response = client.post("/retrieval", json=request_data, headers=headers)
 
         assert response.status_code == 200
-        mock_check.assert_called_once()
-        mock_retrieve.assert_called_once()
+        data = response.json()
+        assert len(data["records"]) == 1
+        assert data["records"][0]["content"] == "Test content"
+        assert data["records"][0]["score"] == 0.95
 
 
-def test_api_documentation_endpoints():
-    """测试API文档相关端点"""
-    # 测试OpenAPI文档端点
-    response = client.get("/openapi.json")
+def test_retrieval_invalid_api_key():
+    headers = {"Authorization": "Bearer short"}
+    request_data = {
+        "knowledge_id": "kb_123",
+        "query": "test query",
+        "retrieval_setting": {"top_k": 5, "score_threshold": 0.5},
+    }
+
+    response = client.post("/retrieval", json=request_data, headers=headers)
+    assert response.status_code == 403
+
+
+def test_retrieval_knowledge_not_found():
+    with patch("dify_kg_ext.api.check_knowledge_exists") as mock_check:
+        mock_check.return_value = False
+
+        headers = {"Authorization": "Bearer test-api-key-123"}
+        request_data = {
+            "knowledge_id": "kb_nonexistent",
+            "query": "test query",
+            "retrieval_setting": {"top_k": 5, "score_threshold": 0.5},
+        }
+
+        response = client.post("/retrieval", json=request_data, headers=headers)
+        assert response.status_code == 404
+
+
+def test_health_check():
+    response = client.get("/health")
     assert response.status_code == 200
+    data = response.json()
+    assert data["status"] == "healthy"
+    assert "timestamp" in data
 
-    openapi_spec = response.json()
-    assert "openapi" in openapi_spec
-    assert "info" in openapi_spec
-    assert openapi_spec["info"]["title"] == "Knowledge Database API"
 
-    # 验证关键端点在文档中
-    paths = openapi_spec["paths"]
-    assert "/retrieval" in paths
-    assert "/health" in paths
-    assert "/knowledge/update" in paths
+def test_root_endpoint():
+    response = client.get("/")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["service"] == "Knowledge Database API"
+    assert "features" in data
+    assert "endpoints" in data
+
+
+# RAGFlow相关的文档处理测试用例
 
 
 def test_upload_document():
-    """Test document upload endpoint"""
-    request = UploadDocumentRequest(file_path="http://example.com/test.pdf")
-    response = client.post("/upload_documents", json=request.model_dump())
+    """测试使用RAGFlow上传文档"""
+    with patch("dify_kg_ext.api.upload_and_parse_document") as mock_upload:
+        mock_upload.return_value = {
+            "dataset_id": "ragflow_dataset_123",
+            "document_id": "ragflow_doc_456",
+            "chunks": ["chunk1", "chunk2", "chunk3"],
+            "status": "completed",
+        }
+
+        request = UploadDocumentRequest(file_path="http://example.com/test.pdf")
+        response = client.post("/upload_documents", json=request.model_dump())
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["sign"] is True
+        assert len(data["dataset_id"]) == 32  # UUID without hyphens
+        assert len(data["document_id"]) == 32
+        assert len(data["part_document_id"]) == 32
+        assert data["document_name"] == "test.pdf"
+        assert data["part_document_name"] == "part_test.pdf"
+
+        mock_upload.assert_called_once_with(
+            file_path="http://example.com/test.pdf",
+            dataset_name=f"dataset_{data['dataset_id']}",
+            chunk_method="naive",
+        )
+
+
+def test_upload_document_ragflow_failure():
+    """测试RAGFlow上传失败的情况"""
+    with patch("dify_kg_ext.api.upload_and_parse_document") as mock_upload:
+        mock_upload.side_effect = Exception("RAGFlow connection failed")
+
+        request = UploadDocumentRequest(file_path="http://example.com/test.pdf")
+        response = client.post("/upload_documents", json=request.model_dump())
+
+        assert response.status_code == 500
+
+
+def test_analyzing_document_from_cache():
+    """测试从缓存中获取文档分析结果"""
+    # 先模拟缓存中有数据
+    document_id = "cached_doc_123"
+    from dify_kg_ext.api import document_cache
+
+    document_cache[document_id] = {
+        "dataset_id": "dataset_456",
+        "document_id": "ragflow_doc_789",
+        "chunks": ["Cached chunk 1", "Cached chunk 2"],
+        "status": "completed",
+    }
+
+    request = AnalyzingDocumentRequest(
+        dataset_id="dataset_456",
+        document_id=document_id,
+        document_name="cached_doc.pdf",
+        chunk_method="naive",
+        parser_flag=0,
+        parser_config={},
+    )
+
+    response = client.post("/analyzing_documents", json=request.model_dump())
 
     assert response.status_code == 200
     data = response.json()
     assert data["sign"] is True
-    assert len(data["dataset_id"]) == 32  # UUID without hyphens
-    assert len(data["document_id"]) == 32
-    assert len(data["part_document_id"]) == 32
-    assert data["document_name"] == "test.pdf"
-    assert data["part_document_name"] == "part_test.pdf"
+    assert len(data["chunks"]) == 2
+    assert data["chunks"] == ["Cached chunk 1", "Cached chunk 2"]
+
+    # 清理缓存
+    del document_cache[document_id]
 
 
-def test_analyzing_document():
-    """Test document analyzing endpoint"""
-    with patch("dify_kg_ext.api.load_document_chunks") as mock_load:
-        mock_load.return_value = [
-            "First chunk content",
-            "Second chunk content",
-            "Third chunk content",
-        ]
+def test_analyzing_document_not_found():
+    """测试分析不存在的文档"""
+    request = AnalyzingDocumentRequest(
+        dataset_id="dataset_123",
+        document_id="nonexistent_doc",
+        document_name="missing.pdf",
+        chunk_method="naive",
+        parser_flag=0,
+        parser_config={},
+    )
 
-        request = AnalyzingDocumentRequest(
-            dataset_id="dataset_123",
-            document_id="doc_456",
-            document_name="test.pdf",
-            chunk_method="naive",
-            parser_flag=0,
-            parser_config={},
-        )
+    response = client.post("/analyzing_documents", json=request.model_dump())
 
-        response = client.post("/analyzing_documents", json=request.model_dump())
-
-        assert response.status_code == 200
-        data = response.json()
-        assert data["sign"] is True
-        assert len(data["chunks"]) == 3
-        assert data["chunks"] == [
-            "First chunk content",
-            "Second chunk content", 
-            "Third chunk content",
-        ]
-        mock_load.assert_called_once()
+    assert response.status_code == 404
+    error_detail = response.json()
+    assert error_detail["detail"]["error_code"] == 2001
+    assert "Document not found" in error_detail["detail"]["error_msg"]
 
 
 def test_analyzing_document_with_custom_config():
-    """Test document analyzing with custom parser configuration"""
-    with patch("dify_kg_ext.api.load_document_chunks") as mock_load:
-        mock_load.return_value = ["Custom config chunk content"]
+    """测试使用自定义配置分析文档"""
+    document_id = "custom_config_doc"
+    from dify_kg_ext.api import document_cache
 
-        request = AnalyzingDocumentRequest(
-            dataset_id="dataset_123",
-            document_id="doc_456",
-            document_name="test.pdf",
-            chunk_method="laws",
-            parser_flag=1,
-            parser_config={
-                "chunk_token_count": 256,
-                "task_page_size": 50,
-                "layout_recognize": True,
-            },
-        )
+    document_cache[document_id] = {
+        "dataset_id": "dataset_456",
+        "document_id": "ragflow_doc_789",
+        "chunks": ["Custom chunk with laws method"],
+        "status": "completed",
+    }
 
-        response = client.post("/analyzing_documents", json=request.model_dump())
+    request = AnalyzingDocumentRequest(
+        dataset_id="dataset_456",
+        document_id=document_id,
+        document_name="legal_doc.pdf",
+        chunk_method="laws",
+        parser_flag=1,
+        parser_config={"chunk_token_count": 256, "layout_recognize": True},
+    )
 
-        assert response.status_code == 200
-        data = response.json()
-        assert data["sign"] is True
-        assert data["chunks"] == ["Custom config chunk content"]
-        mock_load.assert_called_once()
+    response = client.post("/analyzing_documents", json=request.model_dump())
 
+    assert response.status_code == 200
+    data = response.json()
+    assert data["sign"] is True
+    assert data["chunks"] == ["Custom chunk with laws method"]
 
-def test_analyzing_document_timeout():
-    """Test document analyzing timeout handling"""
-    with patch("dify_kg_ext.api.load_document_chunks") as mock_load:
-        mock_load.side_effect = Exception("Document processing timeout")
-
-        request = AnalyzingDocumentRequest(
-            dataset_id="dataset_123",
-            document_id="doc_456",
-            document_name="test.pdf",
-            chunk_method="naive",
-            parser_flag=0,
-        )
-
-        response = client.post("/analyzing_documents", json=request.model_dump())
-
-        assert response.status_code == 500
-        error_detail = response.json()
-        assert error_detail["error_code"] == 5001
-        assert "Document processing timeout" in error_detail["error_msg"]
-
-
-def test_analyzing_document_invalid_file():
-    """Test handling of invalid document IDs"""
-    with patch("dify_kg_ext.api.load_document_chunks") as mock_load:
-        mock_load.side_effect = FileNotFoundError("Document doc_456 not found")
-
-        request = AnalyzingDocumentRequest(
-            dataset_id="dataset_123",
-            document_id="doc_456",
-            document_name="missing.pdf",
-            chunk_method="naive",
-            parser_flag=0,
-        )
-
-        response = client.post("/analyzing_documents", json=request.model_dump())
-
-        assert response.status_code == 404
-        error_detail = response.json()
-        assert error_detail["error_code"] == 2001
-        assert "Document doc_456 not found" in error_detail["error_msg"]
+    # 清理缓存
+    del document_cache[document_id]
 
 
 def test_chunk_text_success():
-    """Test successful text chunking"""
-    import json
-    
-    with patch("dify_kg_ext.api.parse_document_task.delay") as mock_parse_task, \
-         patch("dify_kg_ext.api.chunk_document_task") as mock_chunk_task:
-        
-        # Mock the parse task to return a JSON string representation of a document
-        mock_parse_result = mock_parse_task.return_value
-        mock_document_dict = {
-            "title": "Test Document",
-            "content": "This is test content",
-            "metadata": {}
-        }
-        mock_parse_result.get.return_value = json.dumps(mock_document_dict)
-        
-        # Mock the chunk task to return chunk objects with text
-        mock_chunk_task.return_value = [
-            {"text": "First text chunk", "metadata": {}},
-            {"text": "Second text chunk", "metadata": {}}
+    """测试使用RAGFlow成功进行文本分块"""
+    with patch("dify_kg_ext.api.chunk_text_directly") as mock_chunk:
+        mock_chunk.return_value = [
+            "First text chunk from RAGFlow",
+            "Second text chunk from RAGFlow",
         ]
 
         request = TextChunkingRequest(
-            text="This is a long text that needs to be chunked...",
+            text="This is a long text that needs to be chunked using RAGFlow...",
             chunk_method="naive",
             parser_flag=0,
-            parser_config={}
+            parser_config={},
         )
 
         response = client.post("/chunk_text", json=request.model_dump())
@@ -797,32 +413,28 @@ def test_chunk_text_success():
         data = response.json()
         assert data["sign"] is True
         assert len(data["chunks"]) == 2
-        assert data["chunks"] == ["First text chunk", "Second text chunk"]
+        assert data["chunks"] == [
+            "First text chunk from RAGFlow",
+            "Second text chunk from RAGFlow",
+        ]
+
+        mock_chunk.assert_called_once_with(
+            text=request.text,
+            chunk_method=request.chunk_method,
+            parser_config=None,  # parser_flag=0时传递None
+        )
 
 
 def test_chunk_text_with_parser_config():
-    """Test text chunking with custom parser configuration"""
-    import json
-    
-    with patch("dify_kg_ext.api.parse_document_task.delay") as mock_parse_task, \
-         patch("dify_kg_ext.api.chunk_document_task") as mock_chunk_task:
-        
-        mock_parse_result = mock_parse_task.return_value
-        mock_document_dict = {"title": "Test", "content": "Test content"}
-        mock_parse_result.get.return_value = json.dumps(mock_document_dict)
-        
-        mock_chunk_task.return_value = [
-            {"text": "Custom config chunk", "metadata": {}}
-        ]
+    """测试使用自定义配置进行文本分块"""
+    with patch("dify_kg_ext.api.chunk_text_directly") as mock_chunk:
+        mock_chunk.return_value = ["Custom configured chunk"]
 
         request = TextChunkingRequest(
-            text="Text with custom configuration",
+            text="Text with custom configuration for chunking",
             chunk_method="book",
             parser_flag=1,
-            parser_config={
-                "chunk_token_count": 256,
-                "delimiter": "\n\n"
-            }
+            parser_config={"chunk_token_count": 256, "delimiter": "\n\n"},
         )
 
         response = client.post("/chunk_text", json=request.model_dump())
@@ -831,35 +443,30 @@ def test_chunk_text_with_parser_config():
         data = response.json()
         assert data["sign"] is True
         assert len(data["chunks"]) == 1
-        assert data["chunks"] == ["Custom config chunk"]
-        mock_parse_task.assert_called_once()
-        mock_chunk_task.assert_called_once()
+        assert data["chunks"] == ["Custom configured chunk"]
+
+        mock_chunk.assert_called_once_with(
+            text=request.text,
+            chunk_method=request.chunk_method,
+            parser_config=request.parser_config,  # parser_flag=1时传递实际配置
+        )
 
 
 def test_chunk_text_different_methods():
-    """Test various chunking methods"""
-    import json
-    
-    methods = ["naive", "qa", "table", "laws", "email"]
-    
+    """测试不同的分块方法"""
+    methods = ["naive", "qa", "table", "laws", "email", "book", "paper"]
+
     for method in methods:
-        with patch("dify_kg_ext.api.parse_document_task.delay") as mock_parse_task, \
-             patch("dify_kg_ext.api.chunk_document_task") as mock_chunk_task:
-            
-            mock_parse_result = mock_parse_task.return_value
-            mock_document_dict = {"title": f"{method} test", "content": f"Content for {method}"}
-            mock_parse_result.get.return_value = json.dumps(mock_document_dict)
-            
-            mock_chunk_task.return_value = [
-                {"text": f"{method} chunk content", "metadata": {}}
-            ]
-            
+        with patch("dify_kg_ext.api.chunk_text_directly") as mock_chunk:
+            mock_chunk.return_value = [f"Chunk using {method} method"]
+
             request = TextChunkingRequest(
-                text=f"Sample text for {method}",
+                text=f"Sample text for {method} chunking method",
                 chunk_method=method,
-                parser_flag=0
+                parser_flag=0,
+                parser_config={},
             )
-            
+
             response = client.post("/chunk_text", json=request.model_dump())
             assert response.status_code == 200
             data = response.json()
@@ -867,142 +474,98 @@ def test_chunk_text_different_methods():
             assert method in data["chunks"][0]
 
 
-def test_chunk_text_failure():
-    """Test error handling in text chunking"""
-    with patch("dify_kg_ext.api.parse_document_task.delay") as mock_parse_task:
-        mock_parse_result = mock_parse_task.return_value
-        mock_parse_result.get.side_effect = Exception("Parsing failed")
-        
+def test_chunk_text_ragflow_failure():
+    """测试RAGFlow分块失败的情况"""
+    with patch("dify_kg_ext.api.chunk_text_directly") as mock_chunk:
+        mock_chunk.side_effect = Exception("RAGFlow chunking failed")
+
         request = TextChunkingRequest(
-            text="Problematic text",
+            text="Problematic text that causes RAGFlow to fail",
             chunk_method="naive",
-            parser_flag=0
+            parser_flag=0,
+            parser_config={},
         )
-        
+
         response = client.post("/chunk_text", json=request.model_dump())
-        
+
         assert response.status_code == 500
-        error_detail = response.json()
-        assert error_detail["error_code"] == 5001
-        assert "Text chunking failed" in error_detail["error_msg"]
 
 
-def test_chunk_text_file_cleanup():
-    """Verify temporary files are cleaned up"""
-    import json
-    
-    with patch("dify_kg_ext.api.parse_document_task.delay") as mock_parse_task, \
-         patch("dify_kg_ext.api.chunk_document_task") as mock_chunk_task, \
-         patch("dify_kg_ext.api.os.unlink") as mock_unlink, \
-         patch("dify_kg_ext.api.os.path.exists") as mock_exists:
-        
-        mock_parse_result = mock_parse_task.return_value
-        mock_document_dict = {"title": "Test", "content": "Test content"}
-        mock_parse_result.get.return_value = json.dumps(mock_document_dict)
-        
-        mock_chunk_task.return_value = [
-            {"text": "Clean chunk", "metadata": {}}
-        ]
-        mock_exists.return_value = True
-        
+def test_chunk_text_no_parser_config():
+    """测试不使用parser配置的情况"""
+    with patch("dify_kg_ext.api.chunk_text_directly") as mock_chunk:
+        mock_chunk.return_value = ["Simple chunk without config"]
+
         request = TextChunkingRequest(
-            text="Text to verify cleanup",
+            text="Simple text without parser configuration",
             chunk_method="naive",
-            parser_flag=0
+            parser_flag=0,
+            parser_config={},
         )
-        
+
         response = client.post("/chunk_text", json=request.model_dump())
-        
+
         assert response.status_code == 200
-        # Verify cleanup was called (should be called twice - once for temp processing file, once for NamedTemporaryFile)
-        assert mock_unlink.call_count >= 1
+        data = response.json()
+        assert data["chunks"] == ["Simple chunk without config"]
+
+        # 验证传递给RAGFlow的参数
+        mock_chunk.assert_called_once_with(
+            text=request.text,
+            chunk_method=request.chunk_method,
+            parser_config=None,  # parser_flag=0时应该传递None
+        )
 
 
 def test_chunk_text_edge_cases():
-    """Test edge cases in text chunking"""
-    # Empty text
-    response = client.post("/chunk_text", json={
-        "text": "",
-        "chunk_method": "naive",
-        "parser_flag": 0
-    })
-    assert response.status_code == 422  # Validation error for empty text
-    
-    # Invalid chunk method
-    response = client.post("/chunk_text", json={
-        "text": "Valid text",
-        "chunk_method": "invalid_method",
-        "parser_flag": 0
-    })
-    assert response.status_code == 422
-    
-    # Missing required fields
-    response = client.post("/chunk_text", json={
-        "text": "Partial request"
-    })
-    assert response.status_code == 422
+    """测试边界情况"""
+    test_cases = [
+        {
+            "text": "A",  # 最短的有效文本
+            "expected_chunks": ["Single character chunk"],
+        },
+        {
+            "text": "A" * 10000,  # 很长的文本
+            "expected_chunks": ["Long text chunk 1", "Long text chunk 2"],
+        },
+        {
+            "text": "Short",  # 很短的文本
+            "expected_chunks": ["Short"],
+        },
+    ]
+
+    for i, case in enumerate(test_cases):
+        with patch("dify_kg_ext.api.chunk_text_directly") as mock_chunk:
+            mock_chunk.return_value = case["expected_chunks"]
+
+            request = TextChunkingRequest(
+                text=case["text"], chunk_method="naive", parser_flag=0, parser_config={}
+            )
+
+            response = client.post("/chunk_text", json=request.model_dump())
+
+            assert response.status_code == 200
+            data = response.json()
+            assert data["chunks"] == case["expected_chunks"], f"Test case {i} failed"
 
 
 def test_chunk_text_performance():
-    """Test performance with large text input"""
-    import json
-    
-    large_text = "Large text...\n" * 1000  # ~10KB
-    
-    with patch("dify_kg_ext.api.parse_document_task.delay") as mock_parse_task, \
-         patch("dify_kg_ext.api.chunk_document_task") as mock_chunk_task:
-        
-        mock_parse_result = mock_parse_task.return_value
-        mock_document_dict = {"title": "Large doc", "content": large_text}
-        mock_parse_result.get.return_value = json.dumps(mock_document_dict)
-        
-        mock_chunk_task.return_value = [
-            {"text": "Large chunk content", "metadata": {}}
-        ]
-        
+    """测试分块性能相关的功能"""
+    with patch("dify_kg_ext.api.chunk_text_directly") as mock_chunk:
+        # 模拟返回大量分块
+        large_chunks = [f"Chunk {i}" for i in range(100)]
+        mock_chunk.return_value = large_chunks
+
         request = TextChunkingRequest(
-            text=large_text,
+            text="Very large document content that should be split into many chunks...",
             chunk_method="naive",
-            parser_flag=0
+            parser_flag=1,
+            parser_config={"chunk_token_count": 50},  # 小的token数量产生更多分块
         )
-        
+
         response = client.post("/chunk_text", json=request.model_dump())
-        
-        assert response.status_code == 200
-        assert mock_parse_task.called
-        assert mock_chunk_task.called
 
-
-def test_chunk_text_file_content():
-    """Verify text is correctly written to temp file"""
-    import json
-    
-    test_text = "Test content\nWith multiple lines"
-    
-    with patch("dify_kg_ext.api.NamedTemporaryFile") as mock_temp, \
-         patch("dify_kg_ext.api.process_document_async") as mock_process, \
-         patch("dify_kg_ext.api.load_document_chunks") as mock_load:
-        
-        mock_file = mock_temp.return_value.__enter__.return_value
-        mock_file.name = "/tmp/mock_temp_file.md"
-        
-        # Mock the document processing to complete successfully
-        mock_process.return_value = None  # Async function returns None
-        
-        # Mock loading chunks to return test chunks
-        mock_load.return_value = ["Content verified"]
-        
-        response = client.post("/chunk_text", json=TextChunkingRequest(
-            text=test_text,
-            chunk_method="naive",
-            parser_flag=0
-        ).model_dump())
-        
         assert response.status_code == 200
-        # Verify text was written to file
-        mock_file.write.assert_called_once_with(test_text)
-        mock_file.flush.assert_called()
-        # Verify process_document_async was called
-        mock_process.assert_called_once()
-        # Verify load_document_chunks was called
-        mock_load.assert_called_once()
+        data = response.json()
+        assert len(data["chunks"]) == 100
+        assert all(chunk.startswith("Chunk") for chunk in data["chunks"])

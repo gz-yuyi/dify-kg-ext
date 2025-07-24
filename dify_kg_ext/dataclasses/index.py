@@ -1,11 +1,11 @@
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, ClassVar, Literal
 
 from pydantic import BaseModel, Field, RootModel, field_validator
 
 
 class Answer(BaseModel):
     content: str = Field(..., min_length=1, description="答案内容")
-    channels: List[str] = Field(..., min_items=1, description="渠道ID列表")
+    channels: list[str] = Field(..., min_items=1, description="渠道ID列表")
 
     @field_validator("channels")
     @classmethod
@@ -15,7 +15,7 @@ class Answer(BaseModel):
         return v
 
     class Config:
-        json_schema_extra = {
+        json_schema_extra: ClassVar[dict[str, Any]] = {
             "example": {
                 "content": "您好，社保征缴问题可拨打0769-12366咨询，或向智能客服提问。",
                 "channels": ["channel_a", "channel_b"],
@@ -31,13 +31,13 @@ class Knowledge(BaseModel):
     knowledge_type: Literal["segment", "faq"] = Field(
         ..., description="知识类型：片段或FAQ"
     )
-    question: Optional[str] = Field(None, description="问题文本（FAQ类型必填）")
-    similar_questions: Optional[List[str]] = Field(None, description="相似问题列表")
-    answers: List[Answer] = Field(..., min_items=1, description="答案列表（含渠道）")
+    question: str | None = Field(None, description="问题文本（FAQ类型必填）")
+    similar_questions: list[str] | None = Field(None, description="相似问题列表")
+    answers: list[Answer] = Field(..., min_items=1, description="答案列表（含渠道）")
     weight: int = Field(..., ge=0, description="知识点权重")
-    document_id: Optional[str] = Field(None, description="关联文档ID")
-    keywords: Optional[List[str]] = Field(None, description="关键字列表")
-    category_id: Optional[str] = Field(None, description="知识类别ID")
+    document_id: str | None = Field(None, description="关联文档ID")
+    keywords: list[str] | None = Field(None, description="关键字列表")
+    category_id: str | None = Field(None, description="知识类别ID")
 
     @field_validator("question")
     @classmethod
@@ -68,7 +68,7 @@ class Knowledge(BaseModel):
         return v
 
     class Config:
-        json_schema_extra = {
+        json_schema_extra: ClassVar[dict[str, Any]] = {
             "example": {
                 "segment_id": "id_xxx",
                 "source": "personal",
@@ -93,7 +93,7 @@ class Knowledge(BaseModel):
 
 
 class KnowledgeDeleteRequest(BaseModel):
-    segment_ids: List[str] = Field(..., min_items=1, description="要删除的知识点ID列表")
+    segment_ids: list[str] = Field(..., min_items=1, description="要删除的知识点ID列表")
 
     @field_validator("segment_ids")
     @classmethod
@@ -105,12 +105,14 @@ class KnowledgeDeleteRequest(BaseModel):
         return v
 
     class Config:
-        json_schema_extra = {"example": {"segment_ids": ["id_xxx", "id_yyy"]}}
+        json_schema_extra: ClassVar[dict[str, Any]] = {
+            "example": {"segment_ids": ["id_xxx", "id_yyy"]}
+        }
 
 
 class KnowledgeBindBatchRequest(BaseModel):
     library_id: str = Field(..., min_length=1, description="库ID")
-    category_ids: List[str] = Field(..., min_items=1, description="绑定类别ID列表")
+    category_ids: list[str] = Field(..., min_items=1, description="绑定类别ID列表")
 
     @field_validator("library_id")
     @classmethod
@@ -129,7 +131,7 @@ class KnowledgeBindBatchRequest(BaseModel):
         return v
 
     class Config:
-        json_schema_extra = {
+        json_schema_extra: ClassVar[dict[str, Any]] = {
             "example": {
                 "library_id": "lib_123456",
                 "category_ids": ["cat_001", "cat_002", "cat_003"],
@@ -139,7 +141,7 @@ class KnowledgeBindBatchRequest(BaseModel):
 
 class KnowledgeUnbindBatchRequest(BaseModel):
     library_id: str = Field(..., min_length=1, description="库ID")
-    category_ids: List[str] = Field(..., description="要解绑的类别ID列表")
+    category_ids: list[str] = Field(..., description="要解绑的类别ID列表")
     delete_type: Literal["all", "part"] = Field(..., description="解绑类型：全部或部分")
 
     @field_validator("library_id")
@@ -159,7 +161,7 @@ class KnowledgeUnbindBatchRequest(BaseModel):
         return v
 
     class Config:
-        json_schema_extra = {
+        json_schema_extra: ClassVar[dict[str, Any]] = {
             "example": {
                 "library_id": "lib_123456",
                 "category_ids": ["cat_001", "cat_002"],
@@ -170,18 +172,22 @@ class KnowledgeUnbindBatchRequest(BaseModel):
 
 class BindBatchResponseData(BaseModel):
     success_count: int = Field(..., ge=0, description="成功绑定的数量")
-    failed_ids: List[str] = Field(default_factory=list, description="绑定失败的ID列表")
+    failed_ids: list[str] = Field(default_factory=list, description="绑定失败的ID列表")
 
     class Config:
-        json_schema_extra = {"example": {"success_count": 3, "failed_ids": []}}
+        json_schema_extra: ClassVar[dict[str, Any]] = {
+            "example": {"success_count": 3, "failed_ids": []}
+        }
 
 
 class UnbindBatchResponseData(BaseModel):
     success_count: int = Field(..., ge=0, description="成功解绑的数量")
-    failed_ids: List[str] = Field(default_factory=list, description="解绑失败的ID列表")
+    failed_ids: list[str] = Field(default_factory=list, description="解绑失败的ID列表")
 
     class Config:
-        json_schema_extra = {"example": {"success_count": 2, "failed_ids": []}}
+        json_schema_extra: ClassVar[dict[str, Any]] = {
+            "example": {"success_count": 2, "failed_ids": []}
+        }
 
 
 class BaseResponse(BaseModel):
@@ -189,14 +195,16 @@ class BaseResponse(BaseModel):
     msg: str = Field(..., description="响应消息")
 
     class Config:
-        json_schema_extra = {"example": {"code": 200, "msg": "success"}}
+        json_schema_extra: ClassVar[dict[str, Any]] = {
+            "example": {"code": 200, "msg": "success"}
+        }
 
 
 class BindBatchResponse(BaseResponse):
     data: BindBatchResponseData
 
     class Config:
-        json_schema_extra = {
+        json_schema_extra: ClassVar[dict[str, Any]] = {
             "example": {
                 "code": 200,
                 "msg": "success",
@@ -209,7 +217,7 @@ class UnbindBatchResponse(BaseResponse):
     data: UnbindBatchResponseData
 
     class Config:
-        json_schema_extra = {
+        json_schema_extra: ClassVar[dict[str, Any]] = {
             "example": {
                 "code": 200,
                 "msg": "success",
@@ -238,16 +246,16 @@ class KnowledgeSearchRequest(BaseModel):
         return v
 
     class Config:
-        json_schema_extra = {
+        json_schema_extra: ClassVar[dict[str, Any]] = {
             "example": {"query": "社保问题", "library_id": "lib_123456", "limit": 10}
         }
 
 
 class KnowledgeSearchResponseData(BaseModel):
-    segments: List[Knowledge] = Field(..., description="搜索到的知识列表")
+    segments: list[Knowledge] = Field(..., description="搜索到的知识列表")
 
     class Config:
-        json_schema_extra = {
+        json_schema_extra: ClassVar[dict[str, Any]] = {
             "example": {
                 "segments": [
                     {
@@ -279,7 +287,7 @@ class KnowledgeSearchResponse(BaseResponse):
     data: KnowledgeSearchResponseData
 
     class Config:
-        json_schema_extra = {
+        json_schema_extra: ClassVar[dict[str, Any]] = {
             "example": {
                 "code": 200,
                 "msg": "success",
@@ -312,14 +320,14 @@ class KnowledgeSearchResponse(BaseResponse):
 
 
 class RetrievalMetadataCondition(BaseModel):
-    name: List[str] = Field(..., description="要过滤的元数据名称列表")
+    name: list[str] = Field(..., description="要过滤的元数据名称列表")
     comparison_operator: str = Field(..., description="比较运算符")
-    value: Optional[str] = Field(None, description="比较值")
+    value: str | None = Field(None, description="比较值")
 
 
 class MetadataConditions(BaseModel):
     logical_operator: str = Field("and", description="逻辑运算符：and或or")
-    conditions: List[RetrievalMetadataCondition] = Field(..., description="条件列表")
+    conditions: list[RetrievalMetadataCondition] = Field(..., description="条件列表")
 
 
 class RetrievalSetting(BaseModel):
@@ -333,7 +341,7 @@ class RetrievalRequest(BaseModel):
     knowledge_id: str = Field(..., description="知识库唯一ID")
     query: str = Field(..., min_length=1, description="用户查询")
     retrieval_setting: RetrievalSetting = Field(..., description="检索参数")
-    metadata_condition: Optional[MetadataConditions] = Field(
+    metadata_condition: MetadataConditions | None = Field(
         None, description="元数据过滤条件"
     )
 
@@ -345,7 +353,7 @@ class RetrievalRequest(BaseModel):
         return v
 
     class Config:
-        json_schema_extra = {
+        json_schema_extra: ClassVar[dict[str, Any]] = {
             "example": {
                 "knowledge_id": "your-knowledge-id",
                 "query": "社保问题",
@@ -357,17 +365,17 @@ class RetrievalRequest(BaseModel):
 class RecordMetadata(RootModel):
     """文档元数据"""
 
-    root: Dict[str, Any] = Field(default_factory=dict)
+    root: dict[str, Any] = Field(default_factory=dict)
 
 
 class Record(BaseModel):
     content: str = Field(..., description="知识库中数据源的文本块")
     score: float = Field(..., ge=0, le=1, description="结果与查询的相关性分数")
     title: str = Field(..., description="文档标题")
-    metadata: Optional[Dict[str, Any]] = Field(None, description="文档元数据")
+    metadata: dict[str, Any] | None = Field(None, description="文档元数据")
 
     class Config:
-        json_schema_extra = {
+        json_schema_extra: ClassVar[dict[str, Any]] = {
             "example": {
                 "metadata": {
                     "path": "s3://dify/knowledge.txt",
@@ -389,10 +397,10 @@ class Record(BaseModel):
 
 
 class RetrievalResponse(BaseModel):
-    records: List[Record] = Field(..., description="知识库查询记录列表")
+    records: list[Record] = Field(..., description="知识库查询记录列表")
 
     class Config:
-        json_schema_extra = {
+        json_schema_extra: ClassVar[dict[str, Any]] = {
             "example": {
                 "records": [
                     {
@@ -414,7 +422,7 @@ class ErrorResponse(BaseModel):
     error_msg: str = Field(..., description="API异常描述")
 
     class Config:
-        json_schema_extra = {
+        json_schema_extra: ClassVar[dict[str, Any]] = {
             "example": {
                 "error_code": 1001,
                 "error_msg": "Invalid Authorization header format. Expected 'Bearer <api-key>' format.",

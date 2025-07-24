@@ -1,10 +1,10 @@
 import os
-from typing import List
 
 import aiohttp
 from pydantic import BaseModel, ConfigDict
 
 from . import RerankResult
+
 
 __all__ = ["embedding", "rerank"]
 
@@ -15,7 +15,6 @@ HEADERS = {"Authorization": f"Bearer {TOKEN}", "Content-Type": "application/json
 
 
 class RerankResponse(BaseModel):
-
     class Meta(BaseModel):
         class BilledUnits(BaseModel):
             input_tokens: int
@@ -60,7 +59,7 @@ class RerankResponse(BaseModel):
         )
 
     id: str
-    results: List[RerankResult]
+    results: list[RerankResult]
     meta: Meta
 
     model_config = ConfigDict(
@@ -93,7 +92,7 @@ class RerankResponse(BaseModel):
     )
 
 
-async def rerank(documents: List[str], query: str) -> List[RerankResult]:
+async def rerank(documents: list[str], query: str) -> list[RerankResult]:
     url = f"{BASE_URL}/rerank"
     payload = {
         "model": "BAAI/bge-reranker-v2-m3",
@@ -104,17 +103,19 @@ async def rerank(documents: List[str], query: str) -> List[RerankResult]:
         "max_chunks_per_doc": 123,
     }
 
-    async with aiohttp.ClientSession() as session:
-        async with session.post(url, json=payload, headers=HEADERS) as response:
-            response_dict = await response.json()
-            response = RerankResponse.model_validate(response_dict)
-            return response.results
+    async with (
+        aiohttp.ClientSession() as session,
+        session.post(url, json=payload, headers=HEADERS) as response,
+    ):
+        response_dict = await response.json()
+        response = RerankResponse.model_validate(response_dict)
+        return response.results
 
 
 class EmbeddingResponse(BaseModel):
     class EmbeddingData(BaseModel):
         object: str
-        embedding: List[float]
+        embedding: list[float]
         index: int
 
         model_config = ConfigDict(
@@ -139,7 +140,7 @@ class EmbeddingResponse(BaseModel):
         )
 
     model: str
-    data: List[EmbeddingData]
+    data: list[EmbeddingData]
     usage: Usage
 
     model_config = ConfigDict(
@@ -157,14 +158,16 @@ class EmbeddingResponse(BaseModel):
     )
 
 
-async def embedding(input_text: str) -> List[float]:
+async def embedding(input_text: str) -> list[float]:
     url = f"{BASE_URL}/embeddings"
     payload = {
         "model": "BAAI/bge-m3",
         "input": input_text,
     }
 
-    async with aiohttp.ClientSession() as session:
-        async with session.post(url, json=payload, headers=HEADERS) as response:
-            response_dict = await response.json()
-            return response_dict["data"][0]["embedding"]
+    async with (
+        aiohttp.ClientSession() as session,
+        session.post(url, json=payload, headers=HEADERS) as response,
+    ):
+        response_dict = await response.json()
+        return response_dict["data"][0]["embedding"]

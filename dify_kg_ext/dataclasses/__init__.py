@@ -1,5 +1,64 @@
-from .dify_ext import *
-from .doc_parse import *
-from .index import *
+from .dify_ext import (
+    ErrorResponse,
+    MetadataConditions,
+    Record,
+    RecordMetadata,
+    RetrievalMetadataCondition,
+    RetrievalRequest,
+    RetrievalResponse,
+    RetrievalSetting,
+)
+from .doc_parse import (
+    AnalyzingDocumentRequest,
+    AnalyzingDocumentResponse,
+    ParserConfig,
+    TextChunkingRequest,
+    UploadDocumentRequest,
+    UploadDocumentResponse,
+)
+from .index import (
+    Answer,
+    BaseResponse,
+    BindBatchResponse,
+    BindBatchResponseData,
+    Knowledge,
+    KnowledgeBindBatchRequest,
+    KnowledgeDeleteRequest,
+    KnowledgeSearchRequest,
+    KnowledgeSearchResponse,
+    KnowledgeSearchResponseData,
+    KnowledgeUnbindBatchRequest,
+    UnbindBatchResponse,
+    UnbindBatchResponseData,
+)
 
-__all__ = ["dify_ext", "doc_parse", "index"]
+
+__all__ = [
+    "AnalyzingDocumentRequest",
+    "AnalyzingDocumentResponse",
+    "Answer",
+    "BaseResponse",
+    "BindBatchResponse",
+    "BindBatchResponseData",
+    "ErrorResponse",
+    "Knowledge",
+    "KnowledgeBindBatchRequest",
+    "KnowledgeDeleteRequest",
+    "KnowledgeSearchRequest",
+    "KnowledgeSearchResponse",
+    "KnowledgeSearchResponseData",
+    "KnowledgeUnbindBatchRequest",
+    "MetadataConditions",
+    "ParserConfig",
+    "Record",
+    "RecordMetadata",
+    "RetrievalMetadataCondition",
+    "RetrievalRequest",
+    "RetrievalResponse",
+    "RetrievalSetting",
+    "TextChunkingRequest",
+    "UnbindBatchResponse",
+    "UnbindBatchResponseData",
+    "UploadDocumentRequest",
+    "UploadDocumentResponse",
+]

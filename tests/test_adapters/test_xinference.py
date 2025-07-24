@@ -3,15 +3,18 @@ from unittest.mock import patch
 
 import aresponses
 import pytest
+
 from dify_kg_ext.adapters import RerankResult
 from dify_kg_ext.adapters.xinference import embedding, rerank
 
 
 @pytest.fixture
 def mock_xinference_host():
-    with patch.dict(os.environ, {"XINFERENCE_HOST": "http://test-host"}):
-        with patch("dify_kg_ext.adapters.xinference.BASE_URL", "http://test-host"):
-            yield
+    with (
+        patch.dict(os.environ, {"XINFERENCE_HOST": "http://test-host"}),
+        patch("dify_kg_ext.adapters.xinference.BASE_URL", "http://test-host"),
+    ):
+        yield
 
 
 @pytest.mark.asyncio
@@ -39,13 +42,6 @@ async def test_embedding(mock_xinference_host):
 async def test_rerank(mock_xinference_host):
     test_documents = ["doc1", "doc2", "doc3"]
     test_query = "test query"
-    expected_response = {
-        "results": [
-            {"document": {"text": "doc3"}, "index": 2, "relevance_score": 0.9},
-            {"document": {"text": "doc1"}, "index": 0, "relevance_score": 0.7},
-            {"document": {"text": "doc2"}, "index": 1, "relevance_score": 0.5},
-        ]
-    }
 
     async with aresponses.ResponsesMockServer() as arsps:
         arsps.add(

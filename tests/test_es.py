@@ -1,12 +1,12 @@
-from unittest.mock import AsyncMock, patch
 import json
+from unittest.mock import AsyncMock, patch
 
 import pytest
+from pytest import approx
+
 from dify_kg_ext.dataclasses import Answer, Knowledge
 from dify_kg_ext.es import (
     BINDING_INDEX,
-    KNOWLEDGE_INDEX,
-    VECTOR_INDEX,
     bind_knowledge_to_library,
     check_knowledge_exists,
     delete_documents,
@@ -15,7 +15,6 @@ from dify_kg_ext.es import (
     search_knowledge,
     unbind_knowledge_from_library,
 )
-from pytest import approx
 
 
 @pytest.fixture
@@ -296,32 +295,44 @@ async def test_retrieve_knowledge(mock_es_client, mock_embedding):
     assert len(result["records"]) == 2  # 第三个结果低于阈值
 
     # 验证第一条记录
-    assert result["records"][0]["content"] == "Question: Sample question\n\nAnswer: Sample answer"
+    assert (
+        result["records"][0]["content"]
+        == "Question: Sample question\n\nAnswer: Sample answer"
+    )
     assert result["records"][0]["score"] == approx(0.85)
-    assert result["records"][0]["title"] == json.dumps({
-        "segment_id": "segment_123",
-        "question": "Sample question",
-        "document_id": "doc_456",
-        "category_id": "cat_1",
-        "knowledge_type": "faq",
-        "keywords": ["keyword1", "keyword2"],
-        "answers": [{"content": "Sample answer", "channels": ["channel_a"]}]
-    }, ensure_ascii=False)
+    assert result["records"][0]["title"] == json.dumps(
+        {
+            "segment_id": "segment_123",
+            "question": "Sample question",
+            "document_id": "doc_456",
+            "category_id": "cat_1",
+            "knowledge_type": "faq",
+            "keywords": ["keyword1", "keyword2"],
+            "answers": [{"content": "Sample answer", "channels": ["channel_a"]}],
+        },
+        ensure_ascii=False,
+    )
     assert "metadata" in result["records"][0]
     assert result["records"][0]["metadata"]["document_id"] == "doc_456"
     assert "keywords" in result["records"][0]["metadata"]
 
     # 验证第二条记录
-    assert result["records"][1]["content"] == "Question: Another question\n\nAnswer: Another answer"
+    assert (
+        result["records"][1]["content"]
+        == "Question: Another question\n\nAnswer: Another answer"
+    )
     assert result["records"][1]["score"] == approx(0.75)
-    assert result["records"][1]["title"] == json.dumps({
-        "segment_id": "segment_456",
-        "question": "Another question",
-        "document_id": "doc_789",
-        "category_id": "cat_2",
-        "knowledge_type": "segment",
-        "answers": [{"content": "Another answer", "channels": ["channel_b"]}]
-    }, ensure_ascii=False)
+    assert result["records"][1]["title"] == json.dumps(
+        {
+            "segment_id": "segment_456",
+            "question": "Another question",
+            "document_id": "doc_789",
+            "category_id": "cat_2",
+            "knowledge_type": "segment",
+            "answers": [{"content": "Another answer", "channels": ["channel_b"]}],
+        },
+        ensure_ascii=False,
+    )
 
 
 @pytest.mark.asyncio

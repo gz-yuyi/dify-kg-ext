@@ -49,7 +49,7 @@ def test_upload_and_analyze(base_url, file_path):
         if response.status_code == 200:
             result = response.json()
             print(f"解析成功，共{len(result['chunks'])}个分块")
-            print(f"前3个分块预览:")
+            print("前3个分块预览:")
             for i, chunk in enumerate(result["chunks"][:3]):
                 print(f"  分块{i + 1}: {chunk[:100]}...")
             break
@@ -75,7 +75,7 @@ def test_upload_and_analyze(base_url, file_path):
     if response.status_code == 200:
         result = response.json()
         print(f"部分解析成功，共{len(result['chunks'])}个分块")
-        print(f"前3个分块预览:")
+        print("前3个分块预览:")
         for i, chunk in enumerate(result["chunks"][:3]):
             print(f"  分块{i + 1}: {chunk[:100]}...")
     else:
