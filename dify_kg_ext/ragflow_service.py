@@ -1,10 +1,12 @@
+import asyncio
 import logging
 import os
+import tempfile
 from pathlib import Path
 from typing import Any
 
-import requests
-from ragflow_sdk import RAGFlow
+import aiohttp
+from aiofiles import open as aio_open
 
 
 logger = logging.getLogger(__name__)
@@ -13,46 +15,296 @@ logger = logging.getLogger(__name__)
 RAGFLOW_API_KEY = os.getenv("RAGFLOW_API_KEY", "ragflow-test-key-12345")
 RAGFLOW_BASE_URL = os.getenv("RAGFLOW_BASE_URL", "http://localhost:9380")
 
-# 全局RAGFlow客户端
-_ragflow_client = None
+# 全局HTTP客户端session
+_http_session: aiohttp.ClientSession | None = None
 
 
-def get_ragflow_client() -> RAGFlow:
-    """获取RAGFlow客户端实例"""
-    global _ragflow_client
-    if _ragflow_client is None:
-        _ragflow_client = RAGFlow(api_key=RAGFLOW_API_KEY, base_url=RAGFLOW_BASE_URL)
-    return _ragflow_client
+async def get_http_session() -> aiohttp.ClientSession:
+    """获取HTTP客户端session"""
+    global _http_session
+    if _http_session is None or _http_session.closed:
+        headers = {
+            "Authorization": f"Bearer {RAGFLOW_API_KEY}",
+            "Content-Type": "application/json",
+        }
+        _http_session = aiohttp.ClientSession(
+            base_url=RAGFLOW_BASE_URL,
+            headers=headers,
+            timeout=aiohttp.ClientTimeout(total=300),  # 5分钟超时
+        )
+    return _http_session
 
 
-def download_file_from_url(url: str, target_path: Path) -> bool:
+async def close_http_session():
+    """关闭HTTP客户端session"""
+    global _http_session
+    if _http_session and not _http_session.closed:
+        await _http_session.close()
+        _http_session = None
+
+
+async def download_file_from_url(url: str, target_path: Path) -> bool:
     """从URL下载文件到本地路径"""
-    response = requests.get(url, stream=True)
-    if response.status_code == 200:
-        with open(target_path, "wb") as f:
-            for chunk in response.iter_content(chunk_size=8192):
-                f.write(chunk)
-        return True
-    else:
-        logger.error(f"Failed to download file from {url}: {response.status_code}")
-        return False
+    async with aiohttp.ClientSession() as session, session.get(url) as response:
+        if response.status == 200:
+            async with aio_open(target_path, "wb") as f:
+                async for chunk in response.content.iter_chunked(8192):
+                    await f.write(chunk)
+            return True
+        else:
+            logger.error(f"Failed to download file from {url}: {response.status}")
+            return False
 
 
-def create_dataset_if_not_exists(name: str) -> str:
+async def create_dataset_if_not_exists(name: str) -> str | None:
     """创建数据集（如果不存在）并返回数据集ID"""
-    client = get_ragflow_client()
+    session = await get_http_session()
 
-    # 尝试获取已存在的数据集
-    existing_datasets = client.list_datasets(name=name)
-    if existing_datasets:
-        return existing_datasets[0].id
+    # 先尝试获取已存在的数据集
+    logger.info(f"Searching for existing dataset: {name}")
+    existing_dataset_id = await find_dataset_by_name(name)
+    if existing_dataset_id:
+        logger.info(f"Found existing dataset {name} with ID: {existing_dataset_id}")
+        return existing_dataset_id
 
     # 创建新数据集
-    dataset = client.create_dataset(name=name)
-    return dataset.id
+    logger.info(f"Creating new dataset: {name}")
+    create_data = {"name": name}
+    async with session.post("/api/v1/datasets", json=create_data) as response:
+        if response.status == 200:
+            result = await response.json()
+            dataset_id = result.get("data", {}).get("id")
+            if dataset_id:
+                logger.info(f"Dataset created successfully with ID: {dataset_id}")
+                return dataset_id
+            else:
+                logger.error(f"Dataset creation response did not contain ID: {result}")
+                return None
+        else:
+            error_text = await response.text()
+            logger.error(
+                f"Failed to create dataset {name}: {response.status}, {error_text}"
+            )
+            return None
 
 
-def upload_and_parse_document(
+async def find_dataset_by_name(name: str) -> str | None:
+    """根据名称查找数据集ID"""
+    session = await get_http_session()
+
+    # URL编码数据集名称以处理特殊字符
+    from urllib.parse import quote
+
+    encoded_name = quote(name)
+
+    async with session.get(f"/api/v1/datasets?name={encoded_name}") as response:
+        if response.status == 200:
+            result = await response.json()
+            datasets = result.get("data", [])
+            if datasets and isinstance(datasets, list):
+                logger.info(f"Found {len(datasets)} datasets matching name '{name}'")
+                return datasets[0].get("id")
+        else:
+            error_text = await response.text()
+            logger.warning(
+                f"Failed to search datasets: {response.status}, {error_text}"
+            )
+        return None
+
+
+async def upload_document_to_dataset(
+    dataset_id: str, file_content: bytes, file_name: str
+) -> str | None:
+    """上传文档到数据集"""
+    # 创建专用的multipart上传session，避免Content-Type冲突
+    headers = {"Authorization": f"Bearer {RAGFLOW_API_KEY}"}
+
+    async with aiohttp.ClientSession(
+        base_url=RAGFLOW_BASE_URL,
+        headers=headers,
+        timeout=aiohttp.ClientTimeout(total=300),
+    ) as session:
+        form_data = aiohttp.FormData()
+        form_data.add_field("file", file_content, filename=file_name)
+
+        logger.info(f"Uploading document {file_name} to dataset {dataset_id}")
+
+        async with session.post(
+            f"/api/v1/datasets/{dataset_id}/documents", data=form_data
+        ) as response:
+            if response.status == 200:
+                result = await response.json()
+                documents = result.get("data", [])
+                if documents:
+                    document_id = documents[0].get("id")
+                    logger.info(
+                        f"Document uploaded successfully with ID: {document_id}"
+                    )
+                    return document_id
+                else:
+                    logger.error("Upload response did not contain document data")
+            else:
+                error_text = await response.text()
+                logger.error(
+                    f"Failed to upload document: {response.status}, {error_text}"
+                )
+            return None
+
+
+async def update_document_config(
+    dataset_id: str,
+    document_id: str,
+    chunk_method: str = "naive",
+    parser_config: dict[str, Any] | None = None,
+) -> bool:
+    """更新文档配置"""
+    session = await get_http_session()
+
+    update_data = {"chunk_method": chunk_method}
+
+    if parser_config:
+        # 构建RAGFlow兼容的parser_config
+        ragflow_parser_config = {}
+        if "chunk_token_count" in parser_config:
+            ragflow_parser_config["chunk_token_count"] = parser_config[
+                "chunk_token_count"
+            ]
+        if "delimiter" in parser_config:
+            ragflow_parser_config["delimiter"] = parser_config["delimiter"]
+        if "layout_recognize" in parser_config:
+            ragflow_parser_config["layout_recognize"] = parser_config[
+                "layout_recognize"
+            ]
+
+        # 根据chunk_method添加默认配置
+        if chunk_method == "naive":
+            ragflow_parser_config.update(
+                {
+                    "chunk_token_count": ragflow_parser_config.get(
+                        "chunk_token_count", 128
+                    ),
+                    "delimiter": ragflow_parser_config.get("delimiter", "\n"),
+                    "html4excel": False,
+                    "layout_recognize": ragflow_parser_config.get(
+                        "layout_recognize", True
+                    ),
+                }
+            )
+
+        if ragflow_parser_config:
+            update_data["parser_config"] = ragflow_parser_config
+
+    logger.info(f"Updating document {document_id} config: {update_data}")
+
+    async with session.put(
+        f"/api/v1/datasets/{dataset_id}/documents/{document_id}", json=update_data
+    ) as response:
+        if response.status == 200:
+            logger.info("Document config updated successfully")
+            return True
+        else:
+            error_text = await response.text()
+            logger.error(
+                f"Failed to update document config: {response.status}, {error_text}"
+            )
+            return False
+
+
+async def parse_documents(dataset_id: str, document_ids: list[str]) -> bool:
+    """解析文档"""
+    session = await get_http_session()
+
+    logger.info(f"Starting parsing for documents: {document_ids}")
+    parse_data = {"document_ids": document_ids}
+    async with session.post(
+        f"/api/v1/datasets/{dataset_id}/chunks", json=parse_data
+    ) as response:
+        if response.status == 200:
+            logger.info("Document parsing started successfully")
+            return True
+        else:
+            error_text = await response.text()
+            logger.error(
+                f"Failed to start document parsing: {response.status}, {error_text}"
+            )
+            return False
+
+
+async def get_document_status(
+    dataset_id: str, document_id: str
+) -> dict[str, Any] | None:
+    """获取文档状态"""
+    session = await get_http_session()
+
+    async with session.get(
+        f"/api/v1/datasets/{dataset_id}/documents?id={document_id}"
+    ) as response:
+        if response.status == 200:
+            result = await response.json()
+            docs = result.get("data", {}).get("docs", [])
+            if docs:
+                return docs[0]
+        return None
+
+
+async def get_document_chunks_from_api(dataset_id: str, document_id: str) -> list[str]:
+    """从API获取文档的分块结果"""
+    session = await get_http_session()
+
+    logger.info(f"Retrieving chunks for document {document_id}")
+
+    async with session.get(
+        f"/api/v1/datasets/{dataset_id}/documents/{document_id}/chunks"
+    ) as response:
+        if response.status == 200:
+            result = await response.json()
+            chunks = result.get("data", {}).get("chunks", [])
+            chunk_contents = [chunk.get("content", "") for chunk in chunks]
+            logger.info(f"Retrieved {len(chunk_contents)} chunks successfully")
+            return chunk_contents
+        else:
+            error_text = await response.text()
+            logger.error(f"Failed to get chunks: {response.status}, {error_text}")
+            return []
+
+
+async def wait_for_document_parsing(
+    dataset_id: str, document_id: str, max_retries: int = 30, retry_interval: int = 5
+) -> bool:
+    """等待文档解析完成"""
+    logger.info(f"Waiting for document {document_id} parsing to complete...")
+
+    for retry_count in range(max_retries):
+        doc_status = await get_document_status(dataset_id, document_id)
+        if not doc_status:
+            logger.error(f"Could not get document status for {document_id}")
+            return False
+
+        run_status = doc_status.get("run", "UNSTART")
+        progress_msg = doc_status.get("progress_msg", "")
+
+        logger.info(f"Document parsing status: {run_status}, progress: {progress_msg}")
+
+        if run_status == "DONE":
+            logger.info(f"Document {document_id} parsing completed successfully")
+            return True
+        elif run_status == "FAIL":
+            logger.error(f"Document parsing failed: {progress_msg or 'Unknown error'}")
+            return False
+        elif run_status in ["RUNNING", "UNSTART"]:
+            logger.info(
+                f"Document parsing in progress... (retry {retry_count + 1}/{max_retries})"
+            )
+            await asyncio.sleep(retry_interval)
+            continue
+
+    logger.error(
+        f"Document parsing timeout after {max_retries * retry_interval} seconds"
+    )
+    return False
+
+
+async def upload_and_parse_document(
     file_path: str,
     dataset_name: str = "default",
     chunk_method: str = "naive",
@@ -70,131 +322,76 @@ def upload_and_parse_document(
     Returns:
         包含文档信息和分块结果的字典
     """
-    client = get_ragflow_client()
+    logger.info(f"Starting document upload and parsing: {file_path}")
+    logger.info(f"Dataset: {dataset_name}, Chunk method: {chunk_method}")
 
     # 创建或获取数据集
-    dataset_id = create_dataset_if_not_exists(dataset_name)
-    datasets = client.list_datasets(id=dataset_id)
-    if not datasets:
+    dataset_id = await create_dataset_if_not_exists(dataset_name)
+    if not dataset_id:
         raise Exception(f"Failed to create or get dataset: {dataset_name}")
-
-    dataset = datasets[0]
 
     # 处理文件路径
     if file_path.startswith(("http://", "https://")):
         # 下载文件
+        logger.info(f"Downloading file from URL: {file_path}")
         file_name = file_path.split("/")[-1]
         temp_path = Path(f"/tmp/{file_name}")
         temp_path.parent.mkdir(exist_ok=True)
 
-        if not download_file_from_url(file_path, temp_path):
+        success = await download_file_from_url(file_path, temp_path)
+        if not success:
             raise Exception(f"Failed to download file from {file_path}")
 
         file_content = temp_path.read_bytes()
         temp_path.unlink()  # 清理临时文件
+        logger.info(f"Downloaded and processed file: {file_name}")
     else:
         # 本地文件
+        logger.info(f"Processing local file: {file_path}")
         file_path_obj = Path(file_path)
         if not file_path_obj.exists():
             raise Exception(f"File not found: {file_path}")
 
         file_content = file_path_obj.read_bytes()
         file_name = file_path_obj.name
+        logger.info(f"Read local file: {file_name}, size: {len(file_content)} bytes")
 
     # 上传文档到RAGFlow
-    documents = [{"display_name": file_name, "blob": file_content}]
-    dataset.upload_documents(documents)
-
-    # 获取上传的文档
-    uploaded_docs = dataset.list_documents(keywords=file_name.split(".")[0])
-    if not uploaded_docs:
+    document_id = await upload_document_to_dataset(dataset_id, file_content, file_name)
+    if not document_id:
         raise Exception("Failed to upload document")
 
-    document = uploaded_docs[0]
-
     # 更新文档解析配置
-    update_config = {"chunk_method": chunk_method}
-    if parser_config:
-        # 构建RAGFlow兼容的parser_config
-        ragflow_parser_config = {}
-        if "chunk_token_count" in parser_config:
-            ragflow_parser_config["chunk_token_num"] = parser_config[
-                "chunk_token_count"
-            ]
-        if "delimiter" in parser_config:
-            ragflow_parser_config["delimiter"] = parser_config["delimiter"]
-        if "layout_recognize" in parser_config:
-            ragflow_parser_config["layout_recognize"] = parser_config[
-                "layout_recognize"
-            ]
-
-        # 根据chunk_method添加默认配置
-        if chunk_method == "naive":
-            ragflow_parser_config.update(
-                {
-                    "chunk_token_num": ragflow_parser_config.get(
-                        "chunk_token_num", 128
-                    ),
-                    "delimiter": ragflow_parser_config.get("delimiter", "\n"),
-                    "html4excel": False,
-                    "layout_recognize": ragflow_parser_config.get(
-                        "layout_recognize", True
-                    ),
-                    "raptor": {"use_raptor": False},
-                }
-            )
-        elif chunk_method in ["qa", "manual", "paper", "book", "laws", "presentation"]:
-            ragflow_parser_config["raptor"] = {"use_raptor": False}
-        elif chunk_method in ["table", "picture", "one", "email"]:
-            ragflow_parser_config = None
-
-        if ragflow_parser_config:
-            update_config["parser_config"] = ragflow_parser_config
-
-    # 更新文档配置
-    document.update(update_config)
+    config_updated = await update_document_config(
+        dataset_id, document_id, chunk_method, parser_config
+    )
+    if not config_updated:
+        logger.warning("Failed to update document config, using default settings")
 
     # 触发解析
-    dataset.async_parse_documents([document.id])
+    parse_started = await parse_documents(dataset_id, [document_id])
+    if not parse_started:
+        raise Exception("Failed to start document parsing")
 
-    # 等待解析完成并获取分块结果
-    max_retries = 30  # 最多等待30次，每次5秒
-    retry_count = 0
+    # 等待解析完成
+    parse_completed = await wait_for_document_parsing(dataset_id, document_id)
+    if not parse_completed:
+        raise Exception("Document parsing failed or timeout")
 
-    while retry_count < max_retries:
-        # 重新获取文档状态
-        docs = dataset.list_documents(id=document.id)
-        if docs:
-            doc = docs[0]
-            if doc.run == "DONE":
-                # 解析完成，获取分块
-                chunks = doc.list_chunks()
-                chunk_texts = [chunk.content for chunk in chunks]
+    # 获取分块结果
+    chunk_texts = await get_document_chunks_from_api(dataset_id, document_id)
 
-                return {
-                    "dataset_id": dataset.id,
-                    "document_id": document.id,
-                    "document_name": file_name,
-                    "chunks": chunk_texts,
-                    "total_chunks": len(chunk_texts),
-                    "status": "completed",
-                }
-            elif doc.run == "FAIL":
-                raise Exception(f"Document parsing failed: {doc.progress_msg}")
-            elif doc.run in ["RUNNING", "UNSTART"]:
-                # 继续等待
-                import time
-
-                time.sleep(5)
-                retry_count += 1
-                continue
-        else:
-            raise Exception("Document not found")
-
-    raise Exception("Document parsing timeout")
+    return {
+        "dataset_id": dataset_id,
+        "document_id": document_id,
+        "document_name": file_name,
+        "chunks": chunk_texts,
+        "total_chunks": len(chunk_texts),
+        "status": "completed",
+    }
 
 
-def chunk_text_directly(
+async def chunk_text_directly(
     text: str, chunk_method: str = "naive", parser_config: dict[str, Any] | None = None
 ) -> list[str]:
     """
@@ -209,8 +406,6 @@ def chunk_text_directly(
         分块结果列表
     """
     # 创建临时文件
-    import tempfile
-
     with tempfile.NamedTemporaryFile(
         mode="w", suffix=".txt", delete=False
     ) as temp_file:
@@ -218,7 +413,7 @@ def chunk_text_directly(
         temp_file_path = temp_file.name
 
     # 使用文档处理功能
-    result = upload_and_parse_document(
+    result = await upload_and_parse_document(
         file_path=temp_file_path,
         dataset_name="temp_text_chunking",
         chunk_method=chunk_method,
@@ -231,7 +426,7 @@ def chunk_text_directly(
     return result["chunks"]
 
 
-def get_document_chunks(dataset_id: str, document_id: str) -> list[str]:
+async def get_document_chunks(dataset_id: str, document_id: str) -> list[str]:
     """
     获取已解析文档的分块结果
 
@@ -242,18 +437,10 @@ def get_document_chunks(dataset_id: str, document_id: str) -> list[str]:
     Returns:
         分块结果列表
     """
-    client = get_ragflow_client()
+    return await get_document_chunks_from_api(dataset_id, document_id)
 
-    datasets = client.list_datasets(id=dataset_id)
-    if not datasets:
-        raise Exception(f"Dataset not found: {dataset_id}")
 
-    dataset = datasets[0]
-    documents = dataset.list_documents(id=document_id)
-    if not documents:
-        raise Exception(f"Document not found: {document_id}")
-
-    document = documents[0]
-    chunks = document.list_chunks()
-
-    return [chunk.content for chunk in chunks]
+# 清理函数，在应用关闭时调用
+async def cleanup():
+    """清理资源"""
+    await close_http_session()

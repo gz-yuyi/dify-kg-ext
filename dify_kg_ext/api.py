@@ -1,6 +1,7 @@
 import logging
 import time
 import uuid
+from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -38,6 +39,7 @@ from dify_kg_ext.es import (
 )
 from dify_kg_ext.ragflow_service import (
     chunk_text_directly,
+    cleanup,
     upload_and_parse_document,
 )
 
@@ -49,11 +51,24 @@ logger = logging.getLogger(__name__)
 # 简化的文档缓存，用于存储RAGFlow返回的结果
 document_cache = {}
 
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """应用生命周期管理"""
+    # 启动时
+    logger.info("Starting Knowledge Database API...")
+    yield
+    # 关闭时
+    logger.info("Shutting down Knowledge Database API...")
+    await cleanup()
+
+
 # Initialize FastAPI app
 app = FastAPI(
     title="Knowledge Database API",
     description="Knowledge Database with Dify External Knowledge API Integration",
     version="1.0.0",
+    lifespan=lifespan,
 )
 
 
@@ -298,7 +313,7 @@ async def upload_document(request: UploadDocumentRequest):
     part_document_name = f"part_{document_name}"
 
     # 使用RAGFlow处理文档
-    result = upload_and_parse_document(
+    result = await upload_and_parse_document(
         file_path=request.file_path,
         dataset_name=f"dataset_{dataset_id}",
         chunk_method="naive",  # 默认使用naive方法
@@ -362,7 +377,7 @@ async def chunk_text(request: TextChunkingRequest):
     parser_config = request.parser_config if request.parser_flag == 1 else None
 
     # 使用RAGFlow进行文本分块
-    chunks = chunk_text_directly(
+    chunks = await chunk_text_directly(
         text=request.text,
         chunk_method=request.chunk_method,
         parser_config=parser_config,
