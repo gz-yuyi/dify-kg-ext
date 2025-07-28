@@ -70,10 +70,10 @@ clean:  ## Clean cache and temporary files
 	rm -rf htmlcov/ coverage.xml .coverage 2>/dev/null || true
 
 run:  ## Run the application
-	uv run python main.py
+	uv run python main.py serve
 
 dev:  ## Run in development mode
-	uv run uvicorn main:app --reload --host 0.0.0.0 --port 8000
+	uv run python main.py serve --reload
 
 ci:  ## Run all CI checks (lint, format check, test)
 	uv run ruff check .
