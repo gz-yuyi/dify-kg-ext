@@ -305,49 +305,71 @@ async def upload_document(request: UploadDocumentRequest):
     """
     上传文档并使用RAGFlow进行处理
     """
-    # 从文件路径提取文档名
-    document_name = request.file_path.split("/")[-1]
-
-    # 生成唯一的数据集名称
-    dataset_name = f"dataset_{str(uuid.uuid4()).replace('-', '')}"
-
-    # 创建数据集，获取RAGFlow返回的真实dataset_id
-    dataset_id = await create_dataset_if_not_exists(dataset_name)
-
-    # 处理文件路径（URL或本地文件）
-    if request.file_path.startswith(("http://", "https://")):
-        # 下载文件
-        logger.info(f"Downloading file from URL: {request.file_path}")
-        from pathlib import Path
-
-        temp_path = Path(f"/tmp/{document_name}")
-        temp_path.parent.mkdir(exist_ok=True)
-
-        success = await download_file_from_url(request.file_path, temp_path)
-        if not success:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Failed to download file from {request.file_path}",
-            )
-
-        file_content = temp_path.read_bytes()
-        temp_path.unlink()  # 清理临时文件
-        logger.info(f"Downloaded and processed file: {document_name}")
-    else:
-        # 本地文件
-        logger.info(f"Processing local file: {request.file_path}")
-        from pathlib import Path
-
-        file_path_obj = Path(request.file_path)
-        if not file_path_obj.exists():
-            raise HTTPException(
-                status_code=400, detail=f"File not found: {request.file_path}"
-            )
-
-        file_content = file_path_obj.read_bytes()
-        logger.info(
-            f"Read local file: {document_name}, size: {len(file_content)} bytes"
+    # 验证请求参数
+    if not request.file_path and not request.content:
+        raise HTTPException(
+            status_code=400, detail="Either file_path or content must be provided"
         )
+
+    # 根据文档说明，当两者都提供时优先使用file_path
+    if request.file_path:
+        # 处理文件路径上传
+        document_name = request.file_path.split("/")[-1]
+
+        # 生成唯一的数据集名称
+        dataset_name = f"dataset_{str(uuid.uuid4()).replace('-', '')}"
+
+        # 创建数据集，获取RAGFlow返回的真实dataset_id
+        dataset_id = await create_dataset_if_not_exists(dataset_name)
+
+        # 处理文件路径（URL或本地文件）
+        if request.file_path.startswith(("http://", "https://")):
+            # 下载文件
+            logger.info(f"Downloading file from URL: {request.file_path}")
+            from pathlib import Path
+
+            temp_path = Path(f"/tmp/{document_name}")
+            temp_path.parent.mkdir(exist_ok=True)
+
+            success = await download_file_from_url(request.file_path, temp_path)
+            if not success:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Failed to download file from {request.file_path}",
+                )
+
+            file_content = temp_path.read_bytes()
+            temp_path.unlink()  # 清理临时文件
+            logger.info(f"Downloaded and processed file: {document_name}")
+        else:
+            # 本地文件
+            logger.info(f"Processing local file: {request.file_path}")
+            from pathlib import Path
+
+            file_path_obj = Path(request.file_path)
+            if not file_path_obj.exists():
+                raise HTTPException(
+                    status_code=400, detail=f"File not found: {request.file_path}"
+                )
+
+            file_content = file_path_obj.read_bytes()
+            logger.info(
+                f"Read local file: {document_name}, size: {len(file_content)} bytes"
+            )
+    else:
+        # 处理直接文本内容上传
+        logger.info("Processing direct text content")
+        document_name = f"text_content_{str(uuid.uuid4())[:8]}.txt"
+
+        # 生成唯一的数据集名称
+        dataset_name = f"dataset_{str(uuid.uuid4()).replace('-', '')}"
+
+        # 创建数据集
+        dataset_id = await create_dataset_if_not_exists(dataset_name)
+
+        # 将文本内容转换为字节
+        file_content = request.content.encode("utf-8")
+        logger.info(f"Processing text content, size: {len(file_content)} bytes")
 
     # 上传文档到RAGFlow（不等待解析完成），获取RAGFlow返回的真实document_id
     document_id = await upload_document_to_dataset(

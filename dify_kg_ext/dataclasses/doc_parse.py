@@ -7,15 +7,33 @@ from pydantic import BaseModel, Field
 class UploadDocumentRequest(BaseModel):
     """Request model for uploading a document"""
 
-    file_path: str = Field(
-        ...,
+    file_path: str | None = Field(
+        default=None,
         description="URL or path to the document to be processed",
         example="http://39.105.167.2:9529/template.pdf",
     )
+    content: str | None = Field(
+        default=None,
+        description="Direct text content to upload, either file_path or content is required",
+        example="This is some text content to be processed...",
+    )
+
+    def model_validate(cls, values):
+        """Validate that either file_path or content is provided"""
+        file_path = values.get("file_path")
+        content = values.get("content")
+
+        if not file_path and not content:
+            raise ValueError("Either file_path or content must be provided")
+
+        return values
 
     class Config:
         json_schema_extra: ClassVar[dict[str, Any]] = {
-            "example": {"file_path": "http://39.105.167.2:9529/template.pdf"}
+            "example": {
+                "file_path": "http://39.105.167.2:9529/template.pdf",
+                "content": "",
+            }
         }
 
 
