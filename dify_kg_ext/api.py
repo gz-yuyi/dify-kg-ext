@@ -40,16 +40,18 @@ from dify_kg_ext.es import (
 from dify_kg_ext.ragflow_service import (
     chunk_text_directly,
     cleanup,
-    upload_and_parse_document,
+    create_dataset_if_not_exists,
+    download_file_from_url,
+    get_document_chunks,
+    get_document_status,
+    parse_documents,
+    upload_document_to_dataset,
 )
 
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
-
-# 简化的文档缓存，用于存储RAGFlow返回的结果
-document_cache = {}
 
 
 @asynccontextmanager
@@ -303,40 +305,61 @@ async def upload_document(request: UploadDocumentRequest):
     """
     上传文档并使用RAGFlow进行处理
     """
-    # 生成唯一ID
-    dataset_id = str(uuid.uuid4()).replace("-", "")
-    document_id = str(uuid.uuid4()).replace("-", "")
-    part_document_id = str(uuid.uuid4()).replace("-", "")
-
     # 从文件路径提取文档名
     document_name = request.file_path.split("/")[-1]
+
+    # 生成唯一的数据集名称
+    dataset_name = f"dataset_{str(uuid.uuid4()).replace('-', '')}"
+
+    # 创建数据集，获取RAGFlow返回的真实dataset_id
+    dataset_id = await create_dataset_if_not_exists(dataset_name)
+
+    # 处理文件路径（URL或本地文件）
+    if request.file_path.startswith(("http://", "https://")):
+        # 下载文件
+        logger.info(f"Downloading file from URL: {request.file_path}")
+        from pathlib import Path
+
+        temp_path = Path(f"/tmp/{document_name}")
+        temp_path.parent.mkdir(exist_ok=True)
+
+        success = await download_file_from_url(request.file_path, temp_path)
+        if not success:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Failed to download file from {request.file_path}",
+            )
+
+        file_content = temp_path.read_bytes()
+        temp_path.unlink()  # 清理临时文件
+        logger.info(f"Downloaded and processed file: {document_name}")
+    else:
+        # 本地文件
+        logger.info(f"Processing local file: {request.file_path}")
+        from pathlib import Path
+
+        file_path_obj = Path(request.file_path)
+        if not file_path_obj.exists():
+            raise HTTPException(
+                status_code=400, detail=f"File not found: {request.file_path}"
+            )
+
+        file_content = file_path_obj.read_bytes()
+        logger.info(
+            f"Read local file: {document_name}, size: {len(file_content)} bytes"
+        )
+
+    # 上传文档到RAGFlow（不等待解析完成），获取RAGFlow返回的真实document_id
+    document_id = await upload_document_to_dataset(
+        dataset_id, file_content, document_name
+    )
+
+    # 启动解析（不等待完成）
+    await parse_documents(dataset_id, [document_id])
+
+    # part_document_id设置为"part" + document_id
+    part_document_id = "part" + document_id
     part_document_name = f"part_{document_name}"
-
-    # 使用RAGFlow处理文档
-    result = await upload_and_parse_document(
-        file_path=request.file_path,
-        dataset_name=f"dataset_{dataset_id}",
-        chunk_method="naive",  # 默认使用naive方法
-    )
-
-    # 缓存结果
-    document_cache[document_id] = {
-        "dataset_id": result["dataset_id"],
-        "document_id": result["document_id"],
-        "chunks": result["chunks"],
-        "status": "completed",
-    }
-
-    # 创建部分结果（前10个分块）
-    partial_chunks = (
-        result["chunks"][:10] if len(result["chunks"]) > 10 else result["chunks"]
-    )
-    document_cache[part_document_id] = {
-        "dataset_id": result["dataset_id"],
-        "document_id": result["document_id"],
-        "chunks": partial_chunks,
-        "status": "completed",
-    }
 
     return UploadDocumentResponse(
         dataset_id=dataset_id,
@@ -353,19 +376,67 @@ async def analyzing_document(request: AnalyzingDocumentRequest):
     """
     使用RAGFlow分析文档并返回分块结果
     """
-    # 检查缓存中是否有结果
-    if request.document_id in document_cache:
-        cached_result = document_cache[request.document_id]
-        return AnalyzingDocumentResponse(chunks=cached_result["chunks"], sign=True)
+    # 检查是否是part模式（document_id以"part"开头）
+    is_part_mode = request.document_id.startswith("part")
 
-    # 如果缓存中没有，暂时返回错误，提示需要先上传文档
-    raise HTTPException(
-        status_code=404,
-        detail={
-            "error_code": 2001,
-            "error_msg": "Document not found. Please upload the document first.",
-        },
-    )
+    # 获取真实的RAGFlow document_id
+    if is_part_mode:
+        # 如果是part模式，从document_id中提取真实的document_id
+        ragflow_document_id = request.document_id[4:]  # 去掉"part"前缀
+    else:
+        # 如果不是part模式，直接使用document_id
+        ragflow_document_id = request.document_id
+
+    # dataset_id现在已经是RAGFlow的真实ID，直接使用
+    ragflow_dataset_id = request.dataset_id
+
+    # 先检查文档解析状态
+    doc_status = await get_document_status(ragflow_dataset_id, ragflow_document_id)
+    if not doc_status:
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "error_code": 2001,
+                "error_msg": "Document not found or unable to get document status.",
+            },
+        )
+
+    run_status = doc_status.get("run", "UNSTART")
+    progress_msg = doc_status.get("progress_msg", "")
+
+    # 根据解析状态决定返回内容
+    if run_status in ["UNSTART", "RUNNING"]:
+        # 正在解析中，返回提示信息
+        status_message = f"Document is being parsed... Status: {run_status}"
+        if progress_msg:
+            status_message += f", Progress: {progress_msg}"
+
+        return AnalyzingDocumentResponse(chunks=[status_message], sign=True)
+    elif run_status == "FAIL":
+        # 解析失败
+        error_msg = progress_msg or "Document parsing failed"
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "error_code": 3001,
+                "error_msg": f"Document parsing failed: {error_msg}",
+            },
+        )
+    elif run_status == "DONE":
+        # 解析完成，获取chunks
+        chunks = await get_document_chunks(
+            ragflow_dataset_id, ragflow_document_id, is_part_mode
+        )
+        return AnalyzingDocumentResponse(chunks=chunks, sign=True)
+    else:
+        # 未知状态
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "error_code": 3002,
+                "error_msg": f"Unknown document parsing status: {run_status}",
+            },
+        )
 
 
 @app.post("/chunk_text", response_model=AnalyzingDocumentResponse)

@@ -247,25 +247,103 @@ async def get_document_status(
         return None
 
 
-async def get_document_chunks_from_api(dataset_id: str, document_id: str) -> list[str]:
+async def get_document_chunks_from_api(
+    dataset_id: str, document_id: str, is_part_mode: bool = False
+) -> list[str]:
     """从API获取文档的分块结果"""
     session = await get_http_session()
 
-    logger.info(f"Retrieving chunks for document {document_id}")
+    logger.info(
+        f"Retrieving chunks for document {document_id}, part_mode: {is_part_mode}"
+    )
 
-    async with session.get(
-        f"/api/v1/datasets/{dataset_id}/documents/{document_id}/chunks"
-    ) as response:
-        if response.status == 200:
-            result = await response.json()
-            chunks = result.get("data", {}).get("chunks", [])
-            chunk_contents = [chunk.get("content", "") for chunk in chunks]
-            logger.info(f"Retrieved {len(chunk_contents)} chunks successfully")
-            return chunk_contents
-        else:
-            error_text = await response.text()
-            logger.error(f"Failed to get chunks: {response.status}, {error_text}")
-            return []
+    all_chunks = []
+
+    if is_part_mode:
+        # part模式只需要前10个chunks
+        async with session.get(
+            f"/api/v1/datasets/{dataset_id}/documents/{document_id}/chunks",
+            params={"page": 1, "page_size": 10},
+        ) as response:
+            if response.status == 200:
+                result = await response.json()
+                data = result.get("data", {})
+                chunks = data.get("chunks", [])
+
+                # 提取chunk内容
+                chunk_contents = [chunk.get("content", "") for chunk in chunks]
+                all_chunks.extend(chunk_contents)
+
+                logger.info(f"Retrieved {len(chunk_contents)} chunks in part mode")
+            else:
+                error_text = await response.text()
+                logger.error(f"Failed to get chunks: {response.status}, {error_text}")
+    else:
+        # 非part模式需要获取所有chunks
+        # 先请求第一页获取total数量
+        first_page_size = 100
+        async with session.get(
+            f"/api/v1/datasets/{dataset_id}/documents/{document_id}/chunks",
+            params={"page": 1, "page_size": first_page_size},
+        ) as response:
+            if response.status == 200:
+                result = await response.json()
+                data = result.get("data", {})
+                chunks = data.get("chunks", [])
+                total = data.get("total", 0)
+
+                # 提取第一页chunk内容
+                chunk_contents = [chunk.get("content", "") for chunk in chunks]
+                all_chunks.extend(chunk_contents)
+
+                logger.info(
+                    f"Retrieved page 1: {len(chunk_contents)} chunks, total: {total}"
+                )
+
+                # 如果还有更多chunks，继续获取剩余的
+                if len(all_chunks) < total:
+                    remaining_chunks = total - len(all_chunks)
+                    # 计算需要获取的页数，使用较大的page_size来减少请求次数
+                    remaining_page_size = min(1024, remaining_chunks)
+                    page = 2
+
+                    while len(all_chunks) < total:
+                        async with session.get(
+                            f"/api/v1/datasets/{dataset_id}/documents/{document_id}/chunks",
+                            params={"page": page, "page_size": remaining_page_size},
+                        ) as resp:
+                            if resp.status == 200:
+                                result = await resp.json()
+                                data = result.get("data", {})
+                                chunks = data.get("chunks", [])
+
+                                # 提取chunk内容
+                                chunk_contents = [
+                                    chunk.get("content", "") for chunk in chunks
+                                ]
+                                all_chunks.extend(chunk_contents)
+
+                                logger.info(
+                                    f"Retrieved page {page}: {len(chunk_contents)} chunks, total so far: {len(all_chunks)}/{total}"
+                                )
+
+                                # 如果这页没有更多chunks，退出循环
+                                if len(chunks) == 0:
+                                    break
+
+                                page += 1
+                            else:
+                                error_text = await resp.text()
+                                logger.error(
+                                    f"Failed to get chunks page {page}: {resp.status}, {error_text}"
+                                )
+                                break
+            else:
+                error_text = await response.text()
+                logger.error(f"Failed to get chunks: {response.status}, {error_text}")
+
+    logger.info(f"Retrieved {len(all_chunks)} chunks successfully")
+    return all_chunks
 
 
 async def wait_for_document_parsing(
@@ -283,8 +361,6 @@ async def wait_for_document_parsing(
         run_status = doc_status.get("run", "UNSTART")
         progress_msg = doc_status.get("progress_msg", "")
 
-        logger.info(f"Document parsing status: {run_status}, progress: {progress_msg}")
-
         if run_status == "DONE":
             logger.info(f"Document {document_id} parsing completed successfully")
             return True
@@ -292,9 +368,10 @@ async def wait_for_document_parsing(
             logger.error(f"Document parsing failed: {progress_msg or 'Unknown error'}")
             return False
         elif run_status in ["RUNNING", "UNSTART"]:
-            logger.info(
-                f"Document parsing in progress... (retry {retry_count + 1}/{max_retries})"
-            )
+            if retry_count % 5 == 0:
+                logger.info(
+                    f"Document parsing in progress... (retry {retry_count + 1}/{max_retries})"
+                )
             await asyncio.sleep(retry_interval)
             continue
 
@@ -379,7 +456,9 @@ async def upload_and_parse_document(
         raise Exception("Document parsing failed or timeout")
 
     # 获取分块结果
-    chunk_texts = await get_document_chunks_from_api(dataset_id, document_id)
+    chunk_texts = await get_document_chunks_from_api(
+        dataset_id, document_id, is_part_mode=False
+    )
 
     return {
         "dataset_id": dataset_id,
@@ -426,18 +505,21 @@ async def chunk_text_directly(
     return result["chunks"]
 
 
-async def get_document_chunks(dataset_id: str, document_id: str) -> list[str]:
+async def get_document_chunks(
+    dataset_id: str, document_id: str, is_part_mode: bool = False
+) -> list[str]:
     """
     获取已解析文档的分块结果
 
     Args:
         dataset_id: 数据集ID
         document_id: 文档ID
+        is_part_mode: 是否为part模式，如果是则只返回前10个chunks
 
     Returns:
         分块结果列表
     """
-    return await get_document_chunks_from_api(dataset_id, document_id)
+    return await get_document_chunks_from_api(dataset_id, document_id, is_part_mode)
 
 
 # 清理函数，在应用关闭时调用
