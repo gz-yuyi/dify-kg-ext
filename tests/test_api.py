@@ -269,37 +269,53 @@ def test_root_endpoint():
 
 def test_upload_document():
     """测试使用RAGFlow上传文档"""
-    with patch("dify_kg_ext.api.upload_and_parse_document") as mock_upload:
-        mock_upload.return_value = {
-            "dataset_id": "ragflow_dataset_123",
-            "document_id": "ragflow_doc_456",
-            "chunks": ["chunk1", "chunk2", "chunk3"],
-            "status": "completed",
-        }
+    with (
+        patch("dify_kg_ext.api.create_dataset_if_not_exists") as mock_create_dataset,
+        patch("dify_kg_ext.api.download_file_from_url") as mock_download,
+        patch("dify_kg_ext.api.upload_document_to_dataset") as mock_upload,
+        patch("dify_kg_ext.api.parse_documents") as mock_parse,
+        patch("pathlib.Path") as mock_path,
+    ):
+        # Setup mocks
+        mock_create_dataset.return_value = "ragflow_dataset_123"
+        mock_download.return_value = True
+        mock_upload.return_value = "ragflow_doc_456"
+        mock_parse.return_value = None
+
+        # Mock Path object for file operations
+        mock_path_instance = mock_path.return_value
+        mock_path_instance.parent.mkdir.return_value = None
+        mock_path_instance.read_bytes.return_value = b"fake file content"
+        mock_path_instance.unlink.return_value = None
 
         request = UploadDocumentRequest(file_path="http://example.com/test.pdf")
         response = client.post("/upload_documents", json=request.model_dump())
 
+        # Print response details if test fails
+        if response.status_code != 200:
+            print(f"Response status: {response.status_code}")
+            print(f"Response text: {response.text}")
+
         assert response.status_code == 200
         data = response.json()
         assert data["sign"] is True
-        assert len(data["dataset_id"]) == 32  # UUID without hyphens
-        assert len(data["document_id"]) == 32
-        assert len(data["part_document_id"]) == 32
+        assert data["dataset_id"] == "ragflow_dataset_123"
+        assert data["document_id"] == "ragflow_doc_456"
+        assert data["part_document_id"] == "partragflow_doc_456"
         assert data["document_name"] == "test.pdf"
         assert data["part_document_name"] == "part_test.pdf"
 
-        mock_upload.assert_called_once_with(
-            file_path="http://example.com/test.pdf",
-            dataset_name=f"dataset_{data['dataset_id']}",
-            chunk_method="naive",
-        )
+        # Verify the functions were called
+        mock_create_dataset.assert_called_once()
+        mock_download.assert_called_once()
+        mock_upload.assert_called_once()
+        mock_parse.assert_called_once()
 
 
 def test_upload_document_ragflow_failure():
     """测试RAGFlow上传失败的情况"""
-    with patch("dify_kg_ext.api.upload_and_parse_document") as mock_upload:
-        mock_upload.side_effect = Exception("RAGFlow connection failed")
+    with patch("dify_kg_ext.api.create_dataset_if_not_exists") as mock_create_dataset:
+        mock_create_dataset.side_effect = Exception("RAGFlow connection failed")
 
         request = UploadDocumentRequest(file_path="http://example.com/test.pdf")
         response = client.post("/upload_documents", json=request.model_dump())
