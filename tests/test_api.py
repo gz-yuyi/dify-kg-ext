@@ -273,6 +273,7 @@ def test_upload_document():
         patch("dify_kg_ext.api.create_dataset_if_not_exists") as mock_create_dataset,
         patch("dify_kg_ext.api.download_file_from_url") as mock_download,
         patch("dify_kg_ext.api.upload_document_to_dataset") as mock_upload,
+        patch("dify_kg_ext.api.update_document_config") as mock_update_config,
         patch("dify_kg_ext.api.parse_documents") as mock_parse,
         patch("pathlib.Path") as mock_path,
     ):
@@ -280,6 +281,7 @@ def test_upload_document():
         mock_create_dataset.return_value = "ragflow_dataset_123"
         mock_download.return_value = True
         mock_upload.return_value = "ragflow_doc_456"
+        mock_update_config.return_value = True
         mock_parse.return_value = None
 
         # Mock Path object for file operations
@@ -288,7 +290,12 @@ def test_upload_document():
         mock_path_instance.read_bytes.return_value = b"fake file content"
         mock_path_instance.unlink.return_value = None
 
-        request = UploadDocumentRequest(file_path="http://example.com/test.pdf")
+        request = UploadDocumentRequest(
+            file_path="http://example.com/test.pdf",
+            chunk_method="naive",
+            parser_flag=1,
+            parser_config={"chunk_token_count": 128, "layout_recognize": True},
+        )
         response = client.post("/upload_documents", json=request.model_dump())
 
         # Print response details if test fails
@@ -309,6 +316,12 @@ def test_upload_document():
         mock_create_dataset.assert_called_once()
         mock_download.assert_called_once()
         mock_upload.assert_called_once()
+        mock_update_config.assert_called_once_with(
+            "ragflow_dataset_123",
+            "ragflow_doc_456",
+            "naive",
+            {"chunk_token_count": 128, "layout_recognize": True},
+        )
         mock_parse.assert_called_once()
 
 
@@ -317,7 +330,12 @@ def test_upload_document_ragflow_failure():
     with patch("dify_kg_ext.api.create_dataset_if_not_exists") as mock_create_dataset:
         mock_create_dataset.side_effect = Exception("RAGFlow connection failed")
 
-        request = UploadDocumentRequest(file_path="http://example.com/test.pdf")
+        request = UploadDocumentRequest(
+            file_path="http://example.com/test.pdf",
+            chunk_method="naive",
+            parser_flag=0,
+            parser_config={},
+        )
         response = client.post("/upload_documents", json=request.model_dump())
 
         assert response.status_code == 500
@@ -340,9 +358,6 @@ def test_analyzing_document_from_cache():
         dataset_id="dataset_456",
         document_id=document_id,
         document_name="cached_doc.pdf",
-        chunk_method="naive",
-        parser_flag=0,
-        parser_config={},
     )
 
     response = client.post("/analyzing_documents", json=request.model_dump())
@@ -363,9 +378,6 @@ def test_analyzing_document_not_found():
         dataset_id="dataset_123",
         document_id="nonexistent_doc",
         document_name="missing.pdf",
-        chunk_method="naive",
-        parser_flag=0,
-        parser_config={},
     )
 
     response = client.post("/analyzing_documents", json=request.model_dump())
@@ -376,15 +388,15 @@ def test_analyzing_document_not_found():
     assert "Document not found" in error_detail["detail"]["error_msg"]
 
 
-def test_analyzing_document_with_custom_config():
-    """测试使用自定义配置分析文档"""
-    document_id = "custom_config_doc"
+def test_analyzing_document_successful():
+    """测试成功分析文档"""
+    document_id = "successful_doc"
     from dify_kg_ext.api import document_cache
 
     document_cache[document_id] = {
         "dataset_id": "dataset_456",
         "document_id": "ragflow_doc_789",
-        "chunks": ["Custom chunk with laws method"],
+        "chunks": ["Document chunk 1", "Document chunk 2"],
         "status": "completed",
     }
 
@@ -392,9 +404,6 @@ def test_analyzing_document_with_custom_config():
         dataset_id="dataset_456",
         document_id=document_id,
         document_name="legal_doc.pdf",
-        chunk_method="laws",
-        parser_flag=1,
-        parser_config={"chunk_token_count": 256, "layout_recognize": True},
     )
 
     response = client.post("/analyzing_documents", json=request.model_dump())
@@ -402,7 +411,7 @@ def test_analyzing_document_with_custom_config():
     assert response.status_code == 200
     data = response.json()
     assert data["sign"] is True
-    assert data["chunks"] == ["Custom chunk with laws method"]
+    assert data["chunks"] == ["Document chunk 1", "Document chunk 2"]
 
     # 清理缓存
     del document_cache[document_id]
@@ -585,3 +594,161 @@ def test_chunk_text_performance():
         data = response.json()
         assert len(data["chunks"]) == 100
         assert all(chunk.startswith("Chunk") for chunk in data["chunks"])
+
+
+# 新增的接口配置测试用例
+
+
+def test_upload_document_with_text_content():
+    """测试使用文本内容上传"""
+    with (
+        patch("dify_kg_ext.api.create_dataset_if_not_exists") as mock_create_dataset,
+        patch("dify_kg_ext.api.upload_document_to_dataset") as mock_upload,
+        patch("dify_kg_ext.api.update_document_config") as mock_update_config,
+        patch("dify_kg_ext.api.parse_documents") as mock_parse,
+    ):
+        # Setup mocks
+        mock_create_dataset.return_value = "ragflow_dataset_123"
+        mock_upload.return_value = "ragflow_doc_456"
+        mock_update_config.return_value = True
+        mock_parse.return_value = None
+
+        request = UploadDocumentRequest(
+            content="This is test content to be processed",
+            chunk_method="qa",
+            parser_flag=1,
+            parser_config={"chunk_token_count": 256, "delimiter": "\\n\\n"},
+        )
+        response = client.post("/upload_documents", json=request.model_dump())
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["sign"] is True
+        assert data["dataset_id"] == "ragflow_dataset_123"
+        assert data["document_id"] == "ragflow_doc_456"
+
+        # Verify document configuration was updated
+        mock_update_config.assert_called_once_with(
+            "ragflow_dataset_123",
+            "ragflow_doc_456",
+            "qa",
+            {"chunk_token_count": 256, "delimiter": "\\n\\n"},
+        )
+
+
+def test_upload_document_without_parser_config():
+    """测试parser_flag=0时不使用解析配置"""
+    with (
+        patch("dify_kg_ext.api.create_dataset_if_not_exists") as mock_create_dataset,
+        patch("dify_kg_ext.api.upload_document_to_dataset") as mock_upload,
+        patch("dify_kg_ext.api.update_document_config") as mock_update_config,
+        patch("dify_kg_ext.api.parse_documents") as mock_parse,
+    ):
+        # Setup mocks
+        mock_create_dataset.return_value = "ragflow_dataset_123"
+        mock_upload.return_value = "ragflow_doc_456"
+        mock_update_config.return_value = True
+        mock_parse.return_value = None
+
+        request = UploadDocumentRequest(
+            content="Simple text content",
+            chunk_method="naive",
+            parser_flag=0,
+            parser_config={"chunk_token_count": 256},  # 这个应该被忽略
+        )
+        response = client.post("/upload_documents", json=request.model_dump())
+
+        assert response.status_code == 200
+
+        # Verify parser_config was passed as None when parser_flag=0
+        mock_update_config.assert_called_once_with(
+            "ragflow_dataset_123", "ragflow_doc_456", "naive", None
+        )
+
+
+def test_upload_document_different_chunk_methods():
+    """测试不同的分块方法"""
+    methods = [
+        "naive",
+        "manual",
+        "qa",
+        "table",
+        "paper",
+        "book",
+        "laws",
+        "presentation",
+        "picture",
+        "email",
+    ]
+
+    for method in methods:
+        with (
+            patch(
+                "dify_kg_ext.api.create_dataset_if_not_exists"
+            ) as mock_create_dataset,
+            patch("dify_kg_ext.api.upload_document_to_dataset") as mock_upload,
+            patch("dify_kg_ext.api.update_document_config") as mock_update_config,
+            patch("dify_kg_ext.api.parse_documents") as mock_parse,
+        ):
+            # Setup mocks
+            mock_create_dataset.return_value = f"dataset_{method}"
+            mock_upload.return_value = f"doc_{method}"
+            mock_update_config.return_value = True
+            mock_parse.return_value = None
+
+            request = UploadDocumentRequest(
+                content=f"Content for {method} processing",
+                chunk_method=method,
+                parser_flag=0,
+                parser_config={},
+            )
+            response = client.post("/upload_documents", json=request.model_dump())
+
+            assert response.status_code == 200, f"Failed for method: {method}"
+
+            # Verify correct chunk_method was passed
+            mock_update_config.assert_called_once_with(
+                f"dataset_{method}", f"doc_{method}", method, None
+            )
+
+
+def test_upload_document_config_update_failure():
+    """测试文档配置更新失败的情况"""
+    with (
+        patch("dify_kg_ext.api.create_dataset_if_not_exists") as mock_create_dataset,
+        patch("dify_kg_ext.api.upload_document_to_dataset") as mock_upload,
+        patch("dify_kg_ext.api.update_document_config") as mock_update_config,
+        patch("dify_kg_ext.api.parse_documents") as mock_parse,
+        patch("dify_kg_ext.api.logger") as mock_logger,
+    ):
+        # Setup mocks
+        mock_create_dataset.return_value = "ragflow_dataset_123"
+        mock_upload.return_value = "ragflow_doc_456"
+        mock_update_config.return_value = False  # 配置更新失败
+        mock_parse.return_value = None
+
+        request = UploadDocumentRequest(
+            content="Test content",
+            chunk_method="naive",
+            parser_flag=1,
+            parser_config={"chunk_token_count": 128},
+        )
+        response = client.post("/upload_documents", json=request.model_dump())
+
+        # 即使配置更新失败，上传应该仍然成功
+        assert response.status_code == 200
+
+        # 应该记录警告日志
+        mock_logger.warning.assert_called_once_with(
+            "Failed to update document config, using default settings"
+        )
+
+
+def test_upload_document_validation_error():
+    """测试请求参数验证错误"""
+    # 测试缺少file_path和content的情况
+    request_data = {"chunk_method": "naive", "parser_flag": 0, "parser_config": {}}
+
+    response = client.post("/upload_documents", json=request_data)
+    assert response.status_code == 400  # Our custom validation error
+    assert "Either file_path or content must be provided" in response.json()["detail"]

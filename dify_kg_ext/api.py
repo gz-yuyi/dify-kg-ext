@@ -45,6 +45,7 @@ from dify_kg_ext.ragflow_service import (
     get_document_chunks,
     get_document_status,
     parse_documents,
+    update_document_config,
     upload_document_to_dataset,
 )
 
@@ -435,6 +436,14 @@ async def upload_document(request: UploadDocumentRequest):
     document_id = await upload_document_to_dataset(
         dataset_id, file_content, document_name
     )
+
+    # 更新文档配置（根据parser_flag决定是否使用parser_config）
+    parser_config = request.parser_config if request.parser_flag == 1 else None
+    config_updated = await update_document_config(
+        dataset_id, document_id, request.chunk_method, parser_config
+    )
+    if not config_updated:
+        logger.warning("Failed to update document config, using default settings")
 
     # 启动解析（不等待完成）
     await parse_documents(dataset_id, [document_id])

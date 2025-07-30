@@ -1,6 +1,16 @@
 #!/usr/bin/env python3
 """
 测试新的文档上传和解析API
+
+此脚本测试以下接口的新规范：
+1. POST /upload_documents - 上传文档（现在需要chunk_method、parser_flag、parser_config）
+2. POST /analyzing_documents - 获取文档分块结果（现在只需要dataset_id、document_id、document_name）
+3. POST /chunk_text - 直接文本分块（保持不变）
+
+测试场景：
+- 文件上传：使用URL文件路径 + naive分块方法
+- 文本上传：使用直接文本内容 + book分块方法
+- 文本分块：使用laws分块方法
 """
 
 import json
@@ -12,10 +22,20 @@ import requests
 
 def test_upload_and_analyze(base_url, file_path):
     """测试上传文档并解析"""
-    # 测试文档上传
-    upload_data = {"file_path": file_path}
+    # 测试文档上传（使用文件路径，naive分块方法，启用解析配置）
+    upload_data = {
+        "file_path": file_path,
+        "chunk_method": "naive",  # 基础解析方法
+        "parser_flag": 1,  # 启用解析配置
+        "parser_config": {
+            "chunk_token_count": 128,
+            "layout_recognize": True,
+            "delimiter": "\n",
+        },
+    }
 
     print("1. 上传文档...")
+    print(f"   请求参数: {json.dumps(upload_data, indent=2, ensure_ascii=False)}")
     response = requests.post(f"{base_url}/upload_documents", json=upload_data)
 
     if response.status_code != 200:
@@ -38,9 +58,6 @@ def test_upload_and_analyze(base_url, file_path):
             "dataset_id": upload_result["dataset_id"],
             "document_id": document_id,
             "document_name": upload_result["document_name"],
-            "chunk_method": "naive",
-            "parser_flag": 0,
-            "parser_config": {},
         }
 
         print("\n3. 获取完整解析结果...")
@@ -62,9 +79,6 @@ def test_upload_and_analyze(base_url, file_path):
         "dataset_id": upload_result["dataset_id"],
         "document_id": part_document_id,
         "document_name": upload_result["part_document_name"],
-        "chunk_method": "naive",
-        "parser_flag": 0,
-        "parser_config": {},
     }
 
     print("\n4. 获取部分解析结果（快速展示）...")
@@ -112,9 +126,12 @@ def test_text_chunking(base_url):
 
     chunk_data = {
         "text": test_text,
-        "chunk_method": "naive",
-        "parser_flag": 1,
-        "parser_config": {"chunk_token_count": 50, "delimiter": "\n"},
+        "chunk_method": "laws",  # 法律文档解析方法，适合法律条文
+        "parser_flag": 1,  # 启用解析配置
+        "parser_config": {
+            "chunk_token_count": 50,  # 小分块以便观察效果
+            "delimiter": "\n",
+        },
     }
 
     print("\n5. 测试文本分块（chunk_text接口）...")
@@ -152,8 +169,17 @@ def test_content_upload_and_analyze(base_url):
     区块链技术仍在快速发展中，未来可能会在更多领域发挥重要作用。
     """
 
-    # 1. 上传文本内容
-    upload_data = {"content": test_text}
+    # 1. 上传文本内容（使用book分块方法，适合结构化文档）
+    upload_data = {
+        "content": test_text,
+        "chunk_method": "naive",  # 书籍格式解析，适合结构化内容
+        "parser_flag": 1,  # 启用解析配置
+        "parser_config": {
+            "chunk_token_count": 256,  # 更大的分块大小
+            "layout_recognize": True,
+            "delimiter": "\n\n",  # 按段落分隔
+        },
+    }
 
     print("\n6. 上传文本内容...")
     response = requests.post(f"{base_url}/upload_documents", json=upload_data)
@@ -178,9 +204,6 @@ def test_content_upload_and_analyze(base_url):
             "dataset_id": upload_result["dataset_id"],
             "document_id": document_id,
             "document_name": upload_result["document_name"],
-            "chunk_method": "naive",
-            "parser_flag": 0,
-            "parser_config": {},
         }
 
         response = requests.post(f"{base_url}/analyzing_documents", json=analyze_data)
@@ -208,9 +231,6 @@ def test_content_upload_and_analyze(base_url):
         "dataset_id": upload_result["dataset_id"],
         "document_id": part_document_id,
         "document_name": upload_result["part_document_name"],
-        "chunk_method": "naive",
-        "parser_flag": 0,
-        "parser_config": {},
     }
 
     print("\n8. 获取部分解析结果（快速展示）...")

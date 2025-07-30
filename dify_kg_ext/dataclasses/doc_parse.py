@@ -17,22 +17,41 @@ class UploadDocumentRequest(BaseModel):
         description="Direct text content to upload, either file_path or content is required",
         example="This is some text content to be processed...",
     )
-
-    def model_validate(cls, values):
-        """Validate that either file_path or content is provided"""
-        file_path = values.get("file_path")
-        content = values.get("content")
-
-        if not file_path and not content:
-            raise ValueError("Either file_path or content must be provided")
-
-        return values
+    chunk_method: Literal[
+        "naive",
+        "manual",
+        "qa",
+        "table",
+        "paper",
+        "book",
+        "laws",
+        "presentation",
+        "picture",
+        "email",
+    ] = Field(..., description="Document parsing method to use", example="naive")
+    parser_flag: int = Field(
+        ...,
+        description="Flag indicating if parser config should be used (1=true, 0=false)",
+        example=1,
+    )
+    parser_config: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Configuration settings for the parser",
+        example={"chunk_token_count": 10, "layout_recognize": True, "delimiter": "\n"},
+    )
 
     class Config:
         json_schema_extra: ClassVar[dict[str, Any]] = {
             "example": {
                 "file_path": "http://39.105.167.2:9529/template.pdf",
                 "content": "",
+                "chunk_method": "naive",
+                "parser_flag": 1,
+                "parser_config": {
+                    "chunk_token_count": 10,
+                    "layout_recognize": True,
+                    "delimiter": "\n",
+                },
             }
         }
 
@@ -135,53 +154,14 @@ class AnalyzingDocumentRequest(BaseModel):
         description="Name of the document to be processed",
         example="part-template.pdf",
     )
-    chunk_method: Literal[
-        "naive",
-        "manual",
-        "qa",
-        "table",
-        "paper",
-        "book",
-        "laws",
-        "presentation",
-        "picture",
-        "email",
-    ] = Field(..., description="Document parsing method to use", example="laws")
-    parser_flag: int = Field(
-        0,
-        description="Flag indicating if parser config should be used (1=true, 0=false)",
-        example=0,
-    )
-    parser_config: dict[str, Any] = Field(
-        default_factory=dict,
-        description="Configuration settings for the parser",
-        example={"chunk_token_count": 10, "layout_recognize": True, "delimiter": "\n"},
-    )
 
     class Config:
         json_schema_extra: ClassVar[dict[str, Any]] = {
-            "examples": [
-                {
-                    "dataset_id": "f6c5dc32298211f08b470242ac130006",
-                    "document_id": "fb783ab8298211f0afbf0242ac130006",
-                    "document_name": "part-template.pdf",
-                    "chunk_method": "laws",
-                    "parser_flag": 0,
-                    "parser_config": {},
-                },
-                {
-                    "dataset_id": "f6c5dc32298211f08b470242ac130006",
-                    "document_id": "fb783ab8298211f0afbf0242ac130006",
-                    "document_name": "part-template.pdf",
-                    "chunk_method": "naive",
-                    "parser_flag": 1,
-                    "parser_config": {
-                        "chunk_token_count": 10,
-                        "layout_recognize": True,
-                        "delimiter": "\n",
-                    },
-                },
-            ]
+            "example": {
+                "dataset_id": "f6c5dc32298211f08b470242ac130006",
+                "document_id": "fb783ab8298211f0afbf0242ac130006",
+                "document_name": "part-template.pdf",
+            }
         }
 
 
