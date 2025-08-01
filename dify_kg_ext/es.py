@@ -1,12 +1,12 @@
 import json
 import os
-from typing import List
 
 import elasticsearch
 
 from dify_kg_ext import APP_NAME
 from dify_kg_ext.adapters import embedding
 from dify_kg_ext.dataclasses import Knowledge
+
 
 DIM_SIZE = 1024
 
@@ -204,7 +204,7 @@ async def index_document(doc: "Knowledge"):
 
 
 @ensure_index_exists_decorator
-async def delete_documents(segment_ids: List[str]):
+async def delete_documents(segment_ids: list[str]):
     """
     Delete multiple knowledge documents and their associated vectors by segment_ids
     using a single bulk operation for better atomicity.
@@ -244,7 +244,7 @@ async def delete_documents(segment_ids: List[str]):
 
 
 @ensure_index_exists_decorator
-async def bind_knowledge_to_library(library_id: str, category_ids: List[str]):
+async def bind_knowledge_to_library(library_id: str, category_ids: list[str]):
     """
     Bind multiple knowledge documents to a library
 
@@ -270,7 +270,7 @@ async def bind_knowledge_to_library(library_id: str, category_ids: List[str]):
 
 @ensure_index_exists_decorator
 async def unbind_knowledge_from_library(
-    library_id: str, category_ids: List[str] = None, delete_type: str = "all"
+    library_id: str, category_ids: list[str] | None = None, delete_type: str = "all"
 ):
     """
     Unbind knowledge documents from a library
@@ -338,7 +338,7 @@ async def search_knowledge(query: str, library_id: str, limit: int = 10):
 
     # Extract unique segment_ids from results
     segment_ids = list(
-        set(hit["_source"]["segment_id"] for hit in vector_results["hits"]["hits"])
+        {hit["_source"]["segment_id"] for hit in vector_results["hits"]["hits"]}
     )
 
     if not segment_ids:
@@ -462,7 +462,7 @@ async def retrieve_knowledge(
         if (
             score < score_threshold
             or segment_id in segment_id_set
-            or len(segment_id_set) > top_k
+            or len(segment_id_set) >= top_k
         ):
             continue
 
@@ -477,20 +477,20 @@ async def retrieve_knowledge(
 
         knowledge_source = knowledge_doc["_source"]
 
-        if knowledge_source.get(segment_id) in segment_id_set:
+        if segment_id in segment_id_set:
             continue
 
-        segment_id_set.add(knowledge_source.get(segment_id))
+        segment_id_set.add(segment_id)
 
         # 创建记录
         question = knowledge_source.get("question", "")
         answers = knowledge_source.get("answers", [])
 
         if not question:
-            content = answers[0]['content']
+            content = answers[0]["content"]
         else:
             # TODO 没有考虑渠道字段
-            content = f"Qestion: {question}\n\nAnswer: {answers[0]['content']}"
+            content = f"Question: {question}\n\nAnswer: {answers[0]['content']}"
 
         title = json.dumps(knowledge_source, ensure_ascii=False)
 
@@ -504,4 +504,3 @@ async def retrieve_knowledge(
         )
 
     return {"records": records}
-

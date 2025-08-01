@@ -5,11 +5,12 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
-    "aiocache[redis]>=0.12.3",
+    "aiofiles>=24.1.0",
     "aiohttp>=3.11.8",
     "click>=8.1.7",
     "elasticsearch==8.11.*",
     "fastapi>=0.115.5",
+    "httpx>=0.28.0",
     "openai>=1.55.3",
     "openpyxl>=3.1.5",
     "pandas>=2.2.3",
@@ -17,25 +18,189 @@ dependencies = [
     "pydantic>=2.9.2",
     "python-dotenv>=1.0.1",
     "python-multipart>=0.0.19",
-    "redis>=5.2.0",
     "requests>=2.32.3",
     "uvicorn>=0.32.1",
 ]
 
 [dependency-groups]
+test = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.23.0",
+    "pytest-mock>=3.14.0",
+    "pytest-cov>=5.0.0",
+    "coverage>=7.6.0",
+]
 dev = [
-    "aioresponses>=0.7.7",
-    "autoflake>=2.3.1",
-    "black>=24.10.0",
+    "ruff>=0.7.0",
+    "pre-commit>=3.5.0",
     "ipdb>=0.13.13",
-    "isort>=5.13.2",
-    "pytest-asyncio>=0.24.0",
-    "pytest>=8.3.3",
-    "tqdm>=4.67.1",
     "aresponses>=3.0.0",
 ]
 
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["match_lock"]
+
+[tool.ruff]
+# Exclude a variety of commonly ignored directories.
+exclude = [
+    ".bzr",
+    ".direnv",
+    ".eggs",
+    ".git",
+    ".git-rewrite",
+    ".hg",
+    ".ipynb_checkpoints",
+    ".mypy_cache",
+    ".nox",
+    ".pants.d",
+    ".pyenv",
+    ".pytest_cache",
+    ".pytype",
+    ".ruff_cache",
+    ".svn",
+    ".tox",
+    ".venv",
+    ".vscode",
+    "__pypackages__",
+    "_build",
+    "buck-out",
+    "build",
+    "dist",
+    "node_modules",
+    "site-packages",
+    "venv",
+]
+
+# Same as Black.
+line-length = 88
+indent-width = 4
+
+# Assume Python 3.12
+target-version = "py312"
+
+[tool.ruff.lint]
+# Enable Pyflakes (`F`) and a subset of the pycodestyle (`E`)  codes by default.
+# Unlike Flake8, Ruff doesn't enable pycodestyle warnings (`W`) or
+# McCabe complexity (`C901`) by default.
+select = [
+    "E4",    # pycodestyle errors
+    "E7",    # pycodestyle errors
+    "E9",    # pycodestyle errors
+    "F",     # Pyflakes
+    "I",     # isort
+    "UP",    # pyupgrade
+    "B",     # flake8-bugbear
+    "C4",    # flake8-comprehensions
+    "ICN",   # flake8-import-conventions
+    "PIE",   # flake8-pie
+    "PYI",   # flake8-pyi
+    "RSE",   # flake8-raise
+    "RUF",   # Ruff-specific rules
+    "SIM",   # flake8-simplify
+    "TCH",   # flake8-type-checking
+]
+
+ignore = [
+    "E501",  # Line too long (handled by formatter)
+    "RUF001",  # Comment contains ambiguous characters (allow Chinese punctuation)
+    "RUF002",  # Comment contains ambiguous characters (allow Chinese punctuation)
+    "RUF003",  # Comment contains ambiguous characters (allow Chinese punctuation)
+]
+
+# Allow fix for all enabled rules (when `--fix`) is provided.
+fixable = ["ALL"]
+unfixable = []
+
+# Allow unused variables when underscore-prefixed.
+dummy-variable-rgx = "^(_+|(_+[a-zA-Z0-9_]*[a-zA-Z0-9]+?))$"
+
+[tool.ruff.format]
+# Like Black, use double quotes for strings.
+quote-style = "double"
+
+# Like Black, indent with spaces, rather than tabs.
+indent-style = "space"
+
+# Like Black, respect magic trailing commas.
+skip-magic-trailing-comma = false
+
+# Like Black, automatically detect the appropriate line ending.
+line-ending = "auto"
+
+# Enable auto-formatting of code examples in docstrings. Markdown,
+# reStructuredText code/literal blocks and doctests are all supported.
+docstring-code-format = false
+
+# Set the line length limit used by the formatter.
+docstring-code-line-length = "dynamic"
+
+[tool.ruff.lint.isort]
+# Import sorting configuration
+known-first-party = ["match_lock"]
+force-single-line = false
+lines-after-imports = 2
+
+[tool.coverage.run]
+source = ["match_lock"]
+branch = true
+omit = [
+    "*/tests/*",
+    "*/test_*",
+    "*/__init__.py",
+    "*/conftest.py",
+    "scripts/*",
+]
+
+[tool.coverage.report]
+# Show missing lines in coverage report
+show_missing = true
+# Skip covered files in report output
+skip_covered = false
+# Skip empty files in report output
+skip_empty = true
+# Exclude lines from coverage
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "raise AssertionError",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+    "if TYPE_CHECKING:",
+]
+# Precision for coverage percentage
+precision = 2
+
+[tool.coverage.html]
+directory = "htmlcov"
+title = "match-lock Coverage Report"
+
+[tool.coverage.xml]
+output = "coverage.xml"
+
 [tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py", "*_test.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = [
+    "--strict-markers",
+    "--strict-config",
+    "--verbose",
+]
+filterwarnings = [
+    "error",
+    "ignore::UserWarning",
+    "ignore::DeprecationWarning",
+]
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+    "integration: marks tests as integration tests",
+    "unit: marks tests as unit tests",
+]
+
 asyncio_default_fixture_loop_scope = "session"
 asyncio_mode = "auto"
-addopts = "--disable-warnings"

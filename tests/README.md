@@ -43,4 +43,4 @@ pytest -v
 
 ## Mocking
 
-The tests use `unittest.mock` to mock the Elasticsearch functions. This allows us to test the API endpoints without needing a real Elasticsearch instance. 
+The tests use `unittest.mock` to mock the Elasticsearch functions. This allows us to test the API endpoints without needing a real Elasticsearch instance.

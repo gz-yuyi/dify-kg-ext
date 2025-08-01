@@ -1,0 +1,57 @@
+version: '3.8'
+
+services:
+
+
+  # Elasticsearch for search functionality
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.11.3
+    environment:
+      - discovery.type=${ES_DISCOVERY_TYPE:-single-node}
+      - xpack.security.enabled=${ES_SECURITY_ENABLED:-false}
+      - ES_JAVA_OPTS=${ES_JAVA_OPTS:--Xms512m -Xmx512m}
+    ports:
+      - "${ELASTICSEARCH_PORT:-9200}:9200"
+    volumes:
+      - elasticsearch_data:/usr/share/elasticsearch/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:9200/_cluster/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Main API server
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "${API_PORT:-5001}:5001"
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+    environment:
+      - ELASTICSEARCH_HOST=${ELASTICSEARCH_HOST:-elasticsearch}
+      - ELASTICSEARCH_PORT=${ELASTICSEARCH_PORT:-9200}
+      - SMALL_MODEL_BACKEND=${SMALL_MODEL_BACKEND:-siliconflow}
+      - SILICONFLOW_TOKEN=${SILICONFLOW_TOKEN}
+      - XINFERENCE_HOST=${XINFERENCE_HOST}
+      - APP_NAME=${APP_NAME:-dify_kg_ext}
+      - ES_HOST=http://${ELASTICSEARCH_HOST:-elasticsearch}:${ELASTICSEARCH_PORT:-9200}
+      - RAGFLOW_API_KEY=${RAGFLOW_API_KEY:-ragflow-test-key-12345}
+      - RAGFLOW_BASE_URL=${RAGFLOW_BASE_URL:-http://localhost:9380}
+    restart: unless-stopped
+    volumes:
+      - ${DATA_PATH:-./data}:/app/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Celery worker for document processing
+
+
+volumes:
+  elasticsearch_data:
