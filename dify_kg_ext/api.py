@@ -508,7 +508,7 @@ async def analyzing_document(request: AnalyzingDocumentRequest):
         if progress_msg:
             status_message += f", Progress: {progress_msg}"
 
-        return AnalyzingDocumentResponse(chunks=[status_message], sign=True)
+        return AnalyzingDocumentResponse(chunks=[status_message], sign=False)
     elif run_status == "FAIL":
         # 解析失败
         error_msg = progress_msg or "Document parsing failed"

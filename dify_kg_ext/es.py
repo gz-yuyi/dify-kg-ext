@@ -320,20 +320,20 @@ async def search_knowledge(query: str, library_id: str, limit: int = 10):
     if not category_ids:
         return {"segments": []}
 
-    # Use script_score query instead of KNN for better compatibility
-    vector_query = {
-        "script_score": {
-            "query": {"terms": {"category_id": category_ids}},
-            "script": {
-                "source": "cosineSimilarity(params.query_vector, 'vector') + 1.0",
-                "params": {"query_vector": query_vector},
-            },
-        }
+    # Use KNN query for vector retrieval
+    knn_query = {
+        "field": "vector",
+        "query_vector": query_vector,
+        "k": limit,
+        "num_candidates": max(limit * 20, 100),
     }
 
     # Search for matching knowledge
     vector_results = await es_client.search(
-        index=VECTOR_INDEX, query=vector_query, size=limit
+        index=VECTOR_INDEX,
+        knn=knn_query,
+        query={"terms": {"category_id": category_ids}},
+        size=limit,
     )
 
     # Extract unique segment_ids from results
@@ -428,15 +428,12 @@ async def retrieve_knowledge(
     if not category_ids:
         return {"records": []}
 
-    # 使用script_score查询以获得更好的兼容性
-    vector_query = {
-        "script_score": {
-            "query": {"terms": {"category_id": category_ids}},
-            "script": {
-                "source": "cosineSimilarity(params.query_vector, 'vector') + 1.0",
-                "params": {"query_vector": query_vector},
-            },
-        }
+    # 使用原生 KNN 查询进行向量检索
+    knn_query = {
+        "field": "vector",
+        "query_vector": query_vector,
+        "k": top_k * 2,
+        "num_candidates": max(top_k * 20, 100),
     }
 
     # 应用元数据过滤条件
@@ -444,9 +441,12 @@ async def retrieve_knowledge(
         # TODO 这里需要实现元数据过滤逻辑，暂未实现
         pass
 
-    # 搜索匹配的知识
+    # 搜索匹配的知识（结合类别过滤）
     vector_results = await es_client.search(
-        index=VECTOR_INDEX, query=vector_query, size=top_k * 2
+        index=VECTOR_INDEX,
+        knn=knn_query,
+        query={"terms": {"category_id": category_ids}},
+        size=top_k * 2,
     )
 
     # 提取结果信息
@@ -456,7 +456,7 @@ async def retrieve_knowledge(
 
     for hit in vector_results["hits"]["hits"]:
         source = hit["_source"]
-        score = hit["_score"] - 1.0  # 还原余弦相似度范围到0-1
+        score = float(hit["_score"])  # KNN 直接返回相似度分数
         segment_id = source["segment_id"]
 
         if (
