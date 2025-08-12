@@ -224,10 +224,7 @@ async def delete_knowledge(request: KnowledgeDeleteRequest):
     """
     删除知识条目
     """
-    result = await delete_documents(request.segment_ids)
-    if not result:
-        raise HTTPException(status_code=500, detail="Failed to delete documents")
-
+    await delete_documents(request.segment_ids)
     return {"code": 200, "msg": "success"}
 
 
