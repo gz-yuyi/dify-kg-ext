@@ -54,7 +54,7 @@ class RecordMetadata(RootModel):
 
 class Record(BaseModel):
     content: str = Field(..., description="知识库中数据源的文本块")
-    score: float = Field(..., ge=0, le=1, description="结果与查询的相关性分数")
+    score: float = Field(..., ge=0, description="结果与查询的相关性分数")
     title: str = Field(..., description="文档标题")
     metadata: dict[str, Any] | None = Field(None, description="文档元数据")
 
