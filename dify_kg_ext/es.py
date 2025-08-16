@@ -456,7 +456,7 @@ async def retrieve_knowledge(
 
     for hit in vector_results["hits"]["hits"]:
         source = hit["_source"]
-        score = float(hit["_score"])  # KNN 直接返回相似度分数
+        score = float(hit["_score"] / 2)  # KNN 直接返回相似度分数
         segment_id = source["segment_id"]
 
         if (
