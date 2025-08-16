@@ -36,6 +36,11 @@ class RetrievalRequest(BaseModel):
             raise ValueError("查询不能为空")
         return v
 
+    @field_validator("knowledge_id")
+    @classmethod
+    def validate_knowledge_id(cls, v):
+        return v.replace("_", "-")
+
     class Config:
         json_schema_extra: ClassVar[dict[str, Any]] = {
             "example": {
