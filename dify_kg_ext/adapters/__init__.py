@@ -30,6 +30,9 @@ if os.getenv("SMALL_MODEL_BACKEND") == "xinference":
 elif os.getenv("SMALL_MODEL_BACKEND") == "siliconflow":
     from .siliconflow import embedding as embedding
     from .siliconflow import rerank as rerank
+elif os.getenv("SMALL_MODEL_BACKEND") == "vllm":
+    from .vllm import embedding as embedding
+    from .vllm import rerank as rerank
 else:
     from .xinference import embedding as embedding
     from .xinference import rerank as rerank
